@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>US Boundary Explorer</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="Map controls">
+        <header class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <i data-lucide="map"></i>
+          </div>
+          <div>
+            <h1>US Boundary Explorer</h1>
+            <p>Current Census TIGER geography</p>
+          </div>
+        </header>
+
+        <section class="control-section" aria-labelledby="layer-heading">
+          <div class="section-title" id="layer-heading">
+            <i data-lucide="layers"></i>
+            <span>Layer</span>
+          </div>
+          <div class="segmented" role="radiogroup" aria-label="Boundary layer">
+            <button class="segment is-active" type="button" data-mode="states" aria-pressed="true">
+              States
+            </button>
+            <button class="segment" type="button" data-mode="counties" aria-pressed="false">
+              Counties
+            </button>
+            <button class="segment" type="button" data-mode="metros" aria-pressed="false">
+              MSA
+            </button>
+          </div>
+          <label class="toggle is-disabled" for="includeMicro">
+            <input id="includeMicro" type="checkbox" disabled />
+            <span>Include micropolitan areas</span>
+          </label>
+        </section>
+
+        <section class="control-section" aria-labelledby="search-heading">
+          <div class="section-title" id="search-heading">
+            <i data-lucide="search"></i>
+            <span>Search</span>
+          </div>
+          <form class="search-form" id="searchForm" role="search">
+            <input
+              id="searchInput"
+              name="search"
+              type="search"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Name, abbreviation, GEOID, or CBSA"
+              aria-label="Search the active layer"
+            />
+            <button class="icon-button" type="submit" title="Search" aria-label="Search">
+              <i data-lucide="search"></i>
+            </button>
+          </form>
+          <div class="search-message" id="searchMessage">Search the active layer.</div>
+          <ul class="results" id="searchResults" aria-label="Search results"></ul>
+        </section>
+
+        <section class="control-section" aria-labelledby="summary-heading">
+          <div class="section-title" id="summary-heading">
+            <i data-lucide="database"></i>
+            <span>Coverage</span>
+          </div>
+          <div class="metric-grid">
+            <div class="metric">
+              <strong id="stateCount">--</strong>
+              <span>States + DC</span>
+            </div>
+            <div class="metric">
+              <strong id="countyCount">--</strong>
+              <span>Counties</span>
+            </div>
+            <div class="metric">
+              <strong id="metroCount">--</strong>
+              <span>MSAs</span>
+            </div>
+            <div class="metric">
+              <strong id="microCount">--</strong>
+              <span>Micro areas</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section details-section" aria-labelledby="details-heading">
+          <div class="section-title" id="details-heading">
+            <i data-lucide="info"></i>
+            <span>Selection</span>
+          </div>
+          <div class="selection-title" id="selectionTitle">Nothing selected</div>
+          <div class="selection-subtitle" id="selectionSubtitle">Click a boundary or choose a search result.</div>
+          <dl class="details-list" id="detailsList"></dl>
+        </section>
+
+        <footer class="source-note">
+          Data: <a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_restmapservice.html" target="_blank" rel="noreferrer">U.S. Census TIGERweb</a>.
+          Basemap: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>.
+        </footer>
+      </aside>
+
+      <button class="panel-toggle" id="panelToggle" type="button" title="Toggle panel" aria-label="Toggle panel">
+        <i data-lucide="panel-left-close"></i>
+      </button>
+
+      <main class="map-area" aria-label="Interactive United States map">
+        <div id="map" class="map"></div>
+
+        <div class="map-toolbar" aria-label="Map tools">
+          <button class="icon-button" id="homeButton" type="button" title="Reset view" aria-label="Reset view">
+            <i data-lucide="home"></i>
+          </button>
+          <button class="icon-button" id="zoomInButton" type="button" title="Zoom in" aria-label="Zoom in">
+            <i data-lucide="plus"></i>
+          </button>
+          <button class="icon-button" id="zoomOutButton" type="button" title="Zoom out" aria-label="Zoom out">
+            <i data-lucide="minus"></i>
+          </button>
+          <button class="icon-button" id="locateButton" type="button" title="Locate me" aria-label="Locate me">
+            <i data-lucide="crosshair"></i>
+          </button>
+          <button class="toolbar-button" id="basemapButton" type="button" aria-pressed="true" title="Toggle basemap">
+            <i data-lucide="map-pinned"></i>
+            <span>Base</span>
+          </button>
+        </div>
+
+        <div class="legend" id="legend" aria-live="polite"></div>
+        <div class="map-status" id="mapStatus" role="status">Loading map...</div>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/esri-leaflet@3.0.19/dist/esri-leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
