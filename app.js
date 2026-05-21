@@ -678,25 +678,9 @@
     }
 
     setStatus("Summing county estimates for the selected MSA...");
-    const geometry = window.L.esri.Util.geojsonToArcGIS(feature.geometry);
-    const data = await arcgisQuery(
-      DATASETS.counties.url,
-      {
-        f: "json",
-        where: US_STATE_WHERE,
-        geometry: JSON.stringify(geometry),
-        geometryType: "esriGeometryPolygon",
-        inSR: "4326",
-        spatialRel: "esriSpatialRelIntersects",
-        outFields: "GEOID",
-        returnGeometry: "false",
-        resultRecordCount: "5000",
-      },
-      { forcePost: true },
-    );
-
+    const countyFeatures = await getMsaCountyFeatures(feature);
     const countyIds = Array.from(
-      new Set((data.features || []).map((item) => item.attributes && item.attributes.GEOID).filter(Boolean)),
+      new Set(countyFeatures.map((item) => item.attributes && item.attributes.GEOID).filter(Boolean)),
     );
     const records = countyIds.map((id) => store.byCounty.get(id)).filter(Boolean);
     if (!records.length) {
@@ -711,6 +695,30 @@
     return { populationSummary: summary };
   }
 
+  async function getMsaCountyFeatures(feature) {
+    return queryMsaCountyFeatures(feature, "esriSpatialRelIntersects");
+  }
+
+  async function queryMsaCountyFeatures(feature, spatialRel) {
+    const geometry = window.L.esri.Util.geojsonToArcGIS(feature.geometry);
+    const data = await arcgisQuery(
+      DATASETS.counties.url,
+      {
+        f: "json",
+        where: US_STATE_WHERE,
+        geometry: JSON.stringify(geometry),
+        geometryType: "esriGeometryPolygon",
+        inSR: "4326",
+        spatialRel,
+        outFields: "GEOID",
+        returnGeometry: "false",
+        resultRecordCount: "5000",
+      },
+      { forcePost: true },
+    );
+    return data.features || [];
+  }
+
   function renderDetails(properties, config, populationContext) {
     selectionTitle.textContent = getFeatureName(properties);
     selectionSubtitle.textContent = getFeatureSubtitle(properties, config);
@@ -723,8 +731,7 @@
       ["CSA", properties.CSA],
       ["State", getStateLabel(properties)],
       ["County code", properties.COUNTY],
-      ["2020 population", formatNumberValue(properties.POP100)],
-      ["Housing units", formatNumberValue(properties.HU100)],
+      ["Housing units", getHousingUnitsValue(properties, populationContext)],
       ["Land area", formatArea(properties.AREALAND)],
       ["Water area", formatArea(properties.AREAWATER)],
       ["Center", formatPoint(properties.INTPTLAT || properties.CENTLAT, properties.INTPTLON || properties.CENTLON)],
@@ -767,6 +774,14 @@
       ["County components", summary.componentCount ? numberFormatter.format(summary.componentCount) : ""],
       ["Estimate source", summary.sourceNote || summary.sourcePath],
     ];
+  }
+
+  function getHousingUnitsValue(properties, context) {
+    const summary = context && context.populationSummary;
+    const summaryHousingUnits = summary ? parseNumeric(summary.housingUnits) : null;
+    const value = summaryHousingUnits && summaryHousingUnits > 0 ? summaryHousingUnits : properties.HU100;
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? numberFormatter.format(number) : "";
   }
 
   function updateLegend() {
