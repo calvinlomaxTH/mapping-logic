@@ -1,11 +1,3 @@
-@font-face {
-  font-family: "Third Horizon";
-  src: url("./assets/7ebf22b5a21034f8-s.p.10_7676vm7pyy.woff2") format("woff2");
-  font-weight: 300 900;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
   --panel: #ffffff;
   --panel-strong: #f1f1f1;
@@ -19,7 +11,7 @@
   --gray: #999999;
   --focus: #214d8a;
   --shadow: 0 8px 18px rgba(33, 63, 86, 0.12);
-  font-family: "Third Horizon", Calibri, Candara, "Segoe UI", Arial, sans-serif;
+  font-family: Georgia, "Times New Roman", Times, serif;
 }
 
 * {
