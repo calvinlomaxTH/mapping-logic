@@ -137,32 +137,32 @@
 
   const STYLE = {
     states: {
-      color: "#276ef1",
+      color: "#213F56",
       weight: 1.7,
       opacity: 0.95,
-      fillColor: "#dceaff",
+      fillColor: "#E3DED1",
       fillOpacity: 0.42,
     },
     counties: {
-      color: "#2f7d51",
+      color: "#214D8A",
       weight: 0.75,
       opacity: 0.9,
-      fillColor: "#e4f3e8",
+      fillColor: "#F1F1F1",
       fillOpacity: 0.36,
     },
     metro: {
-      color: "#b85c22",
+      color: "#F7C560",
       weight: 1.35,
       opacity: 0.96,
-      fillColor: "#f4bd7c",
+      fillColor: "#F7C560",
       fillOpacity: 0.32,
     },
     micro: {
-      color: "#73518b",
+      color: "#686668",
       weight: 1.15,
       opacity: 0.92,
       dashArray: "5 4",
-      fillColor: "#e8d7f0",
+      fillColor: "#D0D0D0",
       fillOpacity: 0.24,
     },
   };
@@ -313,9 +313,9 @@
       }
       locateMarker = L.circleMarker(event.latlng, {
         radius: 8,
-        color: "#0f6bff",
+        color: "#214D8A",
         weight: 3,
-        fillColor: "#ffffff",
+        fillColor: "#FFFFFF",
         fillOpacity: 0.95,
       }).addTo(map);
       setStatus("Location found.");
@@ -613,10 +613,10 @@
     highlightLayer = L.geoJSON(feature, {
       interactive: false,
       style: {
-        color: "#171a21",
+        color: "#213F56",
         weight: 3,
         opacity: 1,
-        fillColor: "#ffd166",
+        fillColor: "#F7C560",
         fillOpacity: 0.34,
       },
     }).addTo(map);

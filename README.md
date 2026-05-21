@@ -1,4 +1,4 @@
-# US Boundary Explorer
+# ODIN Map Viewer
 
 A static browser app for exploring United States boundary layers:
 
@@ -27,7 +27,7 @@ http://127.0.0.1:5173
 
 This project is configured for GitHub Pages through GitHub Actions. The workflow is in `.github/workflows/pages.yml`, and `.nojekyll` tells Pages to serve the static files exactly as they are.
 
-   ### One-time GitHub setup
+### One-time GitHub setup
 
 1. Create a new GitHub repository.
 2. In the GitHub repository, go to **Settings** > **Pages**.
@@ -48,7 +48,7 @@ If this folder is not already a git repository:
 git init
 git branch -M main
 git add .
-git commit -m "Add US Boundary Explorer"
+git commit -m "Add ODIN Map Viewer"
 git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPOSITORY.git
 git push -u origin main
 ```
