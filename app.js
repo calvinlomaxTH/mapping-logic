@@ -24,6 +24,7 @@
   const CURRENT_WMS =
     "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer";
   const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
+  const DYNAMIC_LAYER_DPI = 24;
   const SQ_METERS_PER_SQ_MILE = 2589988.110336;
   const US_STATE_CODES = [
     "01",
@@ -232,7 +233,7 @@
   let locateMarker = null;
   let selectionToken = 0;
   const msaEstimateCache = new Map();
-  const populationDataPromise = loadPopulationData().catch(() => null);
+  let populationDataPromise = null;
 
   const map = L.map("map", {
     center: [39.5, -98.35],
@@ -323,6 +324,8 @@
     map.on("locationerror", (event) => {
       setStatus(event.message || "Location unavailable.");
     });
+
+    map.on("click", handleMapClick);
   }
 
   function setMode(mode) {
@@ -357,38 +360,18 @@
   }
 
   function createBoundaryLayer(config) {
-    const layer = L.esri.featureLayer({
-      url: config.url,
-      where: config.where,
-      fields: ["*"],
-      simplifyFactor: 0.4,
-      precision: 5,
-      style: () => ({ ...config.style }),
-    });
-
-    layer.on("createfeature", (event) => {
-      const featureLayer = event.layer;
-      const name = getFeatureName(event.feature.properties);
-
-      featureLayer.bindTooltip(name, {
-        className: "boundary-tooltip",
-        direction: "top",
-        opacity: 0.95,
-        sticky: true,
-      });
-
-      featureLayer.on("mouseover", () => {
-        featureLayer.setStyle(getHoverStyle(config));
-        featureLayer.bringToFront();
-      });
-
-      featureLayer.on("mouseout", () => {
-        featureLayer.setStyle({ ...config.style });
-      });
-
-      featureLayer.on("click", () => {
-        selectFeature(event.feature, config, { fit: false });
-      });
+    const layer = L.esri.dynamicMapLayer({
+      url: CURRENT_WMS,
+      layers: [config.layerId],
+      layerDefs: {
+        [config.layerId]: config.where,
+      },
+      format: "png32",
+      transparent: true,
+      requestParams: {
+        dpi: DYNAMIC_LAYER_DPI,
+      },
+      opacity: 0.88,
     });
 
     layer.on("load", () => {
@@ -400,15 +383,6 @@
     });
 
     return layer;
-  }
-
-  function getHoverStyle(config) {
-    return {
-      ...config.style,
-      color: "#171a21",
-      weight: Math.max(config.style.weight * 1.8, 2.2),
-      fillOpacity: Math.min((config.style.fillOpacity || 0.25) + 0.14, 0.62),
-    };
   }
 
   function getVisibleConfigs() {
@@ -505,6 +479,7 @@
       outFields: "*",
       returnGeometry: "true",
       outSR: "4326",
+      geometryPrecision: "5",
       orderByFields: "NAME ASC",
       resultRecordCount: "8",
     });
@@ -579,6 +554,54 @@
     searchMessage.textContent = "Search the active layer.";
   }
 
+  async function handleMapClick(event) {
+    const token = ++selectionToken;
+    setStatus(`Finding ${getVisibleLabel()} at click...`);
+
+    try {
+      const result = await findFeatureAtLatLng(event.latlng);
+      if (token !== selectionToken) {
+        return;
+      }
+      if (result) {
+        selectFeature(result.feature, result.config, { fit: false });
+      } else {
+        setStatus(`No ${getVisibleLabel()} boundary found at that point.`);
+      }
+    } catch (error) {
+      if (token === selectionToken) {
+        setStatus("Could not query the selected point.");
+      }
+    }
+  }
+
+  async function findFeatureAtLatLng(latlng) {
+    for (const config of getVisibleConfigs()) {
+      const feature = await queryFeatureAtLatLng(config, latlng);
+      if (feature) {
+        return { feature, config };
+      }
+    }
+    return null;
+  }
+
+  async function queryFeatureAtLatLng(config, latlng) {
+    const data = await arcgisQuery(config.url, {
+      f: "geojson",
+      where: config.where,
+      geometry: `${latlng.lng},${latlng.lat}`,
+      geometryType: "esriGeometryPoint",
+      inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+      outFields: "*",
+      returnGeometry: "true",
+      outSR: "4326",
+      geometryPrecision: "5",
+      resultRecordCount: "1",
+    });
+    return (data.features || [])[0] || null;
+  }
+
   function selectFeature(feature, config, options) {
     const shouldFit = Boolean(options && options.fit);
     const token = ++selectionToken;
@@ -641,7 +664,7 @@
   }
 
   async function getPopulationSummaryForFeature(feature, config) {
-    const store = await populationDataPromise;
+    const store = await getPopulationData();
     if (!store) {
       return { populationMessage: "Local estimate data could not be loaded." };
     }
@@ -665,6 +688,13 @@
     }
 
     return getMsaPopulationSummary(feature, store);
+  }
+
+  function getPopulationData() {
+    if (!populationDataPromise) {
+      populationDataPromise = loadPopulationData().catch(() => null);
+    }
+    return populationDataPromise;
   }
 
   async function getMsaPopulationSummary(feature, store) {
