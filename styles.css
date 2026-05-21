@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Third Horizon";
+  src: url("./assets/7ebf22b5a21034f8-s.p.10_7676vm7pyy.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --panel: #ffffff;
   --panel-strong: #f1f1f1;
@@ -11,7 +19,7 @@
   --gray: #999999;
   --focus: #214d8a;
   --shadow: 0 8px 18px rgba(33, 63, 86, 0.12);
-  font-family: Calibri, Candara, "Segoe UI", Arial, sans-serif;
+  font-family: "Third Horizon", Calibri, Candara, "Segoe UI", Arial, sans-serif;
 }
 
 * {
@@ -65,45 +73,15 @@ a {
 }
 
 .brand {
-  display: grid;
-  grid-template-columns: 42px 1fr;
-  gap: 12px;
-  align-items: center;
+  display: block;
   padding: 22px 20px 18px;
 }
 
-.brand-mark {
-  position: relative;
-  display: flex;
-  width: 42px;
-  height: 42px;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
-  border: 1px solid rgba(247, 197, 96, 0.62);
-  border-radius: 8px;
-  padding: 8px 7px;
-  background: var(--blue);
-}
-
-.brand-mark span {
+.brand-logo {
   display: block;
-  width: 8px;
-  border: 2px solid var(--gold);
-  border-bottom: 0;
-  border-radius: 9px 9px 0 0;
-}
-
-.brand-mark span:nth-child(1) {
-  height: 18px;
-}
-
-.brand-mark span:nth-child(2) {
-  height: 25px;
-}
-
-.brand-mark span:nth-child(3) {
-  height: 14px;
+  width: min(214px, 100%);
+  height: auto;
+  margin-bottom: 14px;
 }
 
 .brand h1 {
