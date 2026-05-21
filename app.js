@@ -23,6 +23,7 @@
 
   const CURRENT_WMS =
     "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer";
+  const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
   const SQ_METERS_PER_SQ_MILE = 2589988.110336;
   const US_STATE_CODES = [
     "01",
@@ -229,6 +230,9 @@
   let activeLayers = [];
   let highlightLayer = null;
   let locateMarker = null;
+  let selectionToken = 0;
+  const msaEstimateCache = new Map();
+  const populationDataPromise = loadPopulationData().catch(() => null);
 
   const map = L.map("map", {
     center: [39.5, -98.35],
@@ -534,8 +538,12 @@
     return `(${config.where}) AND (${deduped.join(" OR ")})`;
   }
 
-  async function arcgisQuery(url, params) {
-    const response = await fetch(`${url}/query?${new URLSearchParams(params).toString()}`);
+  async function arcgisQuery(url, params, options) {
+    const query = new URLSearchParams(params);
+    const usePost = Boolean(options && options.forcePost) || query.toString().length > 1800;
+    const response = usePost
+      ? await fetch(`${url}/query`, { method: "POST", body: query })
+      : await fetch(`${url}/query?${query.toString()}`);
     if (!response.ok) {
       throw new Error(`Request failed: ${response.status}`);
     }
@@ -573,6 +581,7 @@
 
   function selectFeature(feature, config, options) {
     const shouldFit = Boolean(options && options.fit);
+    const token = ++selectionToken;
 
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
@@ -601,10 +610,14 @@
       }
     }
 
-    renderDetails(feature.properties, config);
+    renderDetails(feature.properties, config, {
+      populationMessage: "Loading local estimate data...",
+    });
+    hydratePopulationDetails(feature, config, token);
   }
 
   function clearSelection() {
+    selectionToken += 1;
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
       highlightLayer = null;
@@ -614,7 +627,91 @@
     detailsList.replaceChildren();
   }
 
-  function renderDetails(properties, config) {
+  async function hydratePopulationDetails(feature, config, token) {
+    let summary;
+    try {
+      summary = await getPopulationSummaryForFeature(feature, config);
+    } catch (error) {
+      summary = { populationMessage: "Estimate data could not be added for this selection." };
+    }
+    if (token !== selectionToken) {
+      return;
+    }
+    renderDetails(feature.properties, config, summary);
+  }
+
+  async function getPopulationSummaryForFeature(feature, config) {
+    const store = await populationDataPromise;
+    if (!store) {
+      return { populationMessage: "Local estimate data could not be loaded." };
+    }
+
+    if (config.key === "states") {
+      const stateId = padCode(feature.properties.GEOID || feature.properties.STATE, 2);
+      const record = store.byState.get(stateId);
+      return record
+        ? { populationSummary: buildPopulationSummary([record], store) }
+        : { populationMessage: `No ${store.latestYear} estimate found in ${store.sourcePath}.` };
+    }
+
+    if (config.key === "counties") {
+      const countyId =
+        feature.properties.GEOID ||
+        `${padCode(feature.properties.STATE, 2)}${padCode(feature.properties.COUNTY, 3)}`;
+      const record = store.byCounty.get(countyId);
+      return record
+        ? { populationSummary: buildPopulationSummary([record], store) }
+        : { populationMessage: `No ${store.latestYear} estimate found in ${store.sourcePath}.` };
+    }
+
+    return getMsaPopulationSummary(feature, store);
+  }
+
+  async function getMsaPopulationSummary(feature, store) {
+    const cacheKey = feature.properties.CBSA || feature.properties.GEOID || getFeatureName(feature.properties);
+    if (msaEstimateCache.has(cacheKey)) {
+      return { populationSummary: msaEstimateCache.get(cacheKey) };
+    }
+
+    if (!window.L.esri.Util || !window.L.esri.Util.geojsonToArcGIS) {
+      return { populationMessage: "MSA estimate aggregation is unavailable in this browser." };
+    }
+
+    setStatus("Summing county estimates for the selected MSA...");
+    const geometry = window.L.esri.Util.geojsonToArcGIS(feature.geometry);
+    const data = await arcgisQuery(
+      DATASETS.counties.url,
+      {
+        f: "json",
+        where: US_STATE_WHERE,
+        geometry: JSON.stringify(geometry),
+        geometryType: "esriGeometryPolygon",
+        inSR: "4326",
+        spatialRel: "esriSpatialRelIntersects",
+        outFields: "GEOID",
+        returnGeometry: "false",
+        resultRecordCount: "5000",
+      },
+      { forcePost: true },
+    );
+
+    const countyIds = Array.from(
+      new Set((data.features || []).map((item) => item.attributes && item.attributes.GEOID).filter(Boolean)),
+    );
+    const records = countyIds.map((id) => store.byCounty.get(id)).filter(Boolean);
+    if (!records.length) {
+      return { populationMessage: `No county-level ${store.latestYear} estimates found for this MSA.` };
+    }
+
+    const summary = buildPopulationSummary(records, store, {
+      componentCount: records.length,
+      sourceNote: "Summed from county estimates",
+    });
+    msaEstimateCache.set(cacheKey, summary);
+    return { populationSummary: summary };
+  }
+
+  function renderDetails(properties, config, populationContext) {
     selectionTitle.textContent = getFeatureName(properties);
     selectionSubtitle.textContent = getFeatureSubtitle(properties, config);
     detailsList.replaceChildren();
@@ -626,11 +723,12 @@
       ["CSA", properties.CSA],
       ["State", getStateLabel(properties)],
       ["County code", properties.COUNTY],
-      ["Population", formatNumberValue(properties.POP100)],
+      ["2020 population", formatNumberValue(properties.POP100)],
       ["Housing units", formatNumberValue(properties.HU100)],
       ["Land area", formatArea(properties.AREALAND)],
       ["Water area", formatArea(properties.AREAWATER)],
       ["Center", formatPoint(properties.INTPTLAT || properties.CENTLAT, properties.INTPTLON || properties.CENTLON)],
+      ...getPopulationRows(populationContext),
     ].filter((row) => hasDisplayValue(row[1]));
 
     rows.forEach(([label, value]) => {
@@ -640,6 +738,35 @@
       description.textContent = value;
       detailsList.append(term, description);
     });
+  }
+
+  function getPopulationRows(context) {
+    if (!context) {
+      return [];
+    }
+    if (context.populationMessage) {
+      return [["Estimate data", context.populationMessage]];
+    }
+    if (!context.populationSummary) {
+      return [];
+    }
+
+    const summary = context.populationSummary;
+    const year = summary.latestYear;
+    const previousYear = summary.previousYear;
+    return [
+      [`${year} estimate`, formatNumberValue(summary.estimate)],
+      [`${previousYear}-${year} change`, formatSignedNumber(summary.change)],
+      [`${previousYear}-${year} growth`, formatSignedPercent(summary.percentChange)],
+      [`Births ${year}`, formatNumberValue(summary.births)],
+      [`Deaths ${year}`, formatNumberValue(summary.deaths)],
+      [`Natural change ${year}`, formatSignedNumber(summary.naturalChange)],
+      [`Net migration ${year}`, formatSignedNumber(summary.netMigration)],
+      [`Domestic migration ${year}`, formatSignedNumber(summary.domesticMigration)],
+      [`International migration ${year}`, formatSignedNumber(summary.internationalMigration)],
+      ["County components", summary.componentCount ? numberFormatter.format(summary.componentCount) : ""],
+      ["Estimate source", summary.sourceNote || summary.sourcePath],
+    ];
   }
 
   function updateLegend() {
@@ -667,6 +794,151 @@
       row.append(swatch, label);
       legendElement.append(row);
     });
+  }
+
+  async function loadPopulationData() {
+    let lastError = null;
+    for (const path of POPULATION_DATA_PATHS) {
+      try {
+        const response = await fetch(path);
+        if (!response.ok) {
+          throw new Error(`Could not load ${path}`);
+        }
+        const csvText = await response.text();
+        return buildPopulationStore(csvText, path);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("No population estimate CSV found.");
+  }
+
+  function buildPopulationStore(csvText, sourcePath) {
+    const rows = parseCsv(csvText);
+    if (!rows.length) {
+      throw new Error("Population estimate CSV is empty.");
+    }
+
+    const headers = rows.shift().map((header) => header.trim());
+    const estimateYears = headers
+      .map((header) => {
+        const match = header.match(/^POPESTIMATE(\d{4})$/);
+        return match ? Number(match[1]) : null;
+      })
+      .filter((year) => Number.isFinite(year))
+      .sort((a, b) => a - b);
+
+    const latestYear = estimateYears[estimateYears.length - 1];
+    const previousYear = estimateYears[estimateYears.length - 2] || latestYear;
+    const byState = new Map();
+    const byCounty = new Map();
+
+    rows.forEach((row) => {
+      const record = {};
+      headers.forEach((header, index) => {
+        record[header] = String(row[index] || "").trim();
+      });
+
+      if (record.SUMLEV === "40") {
+        byState.set(padCode(record.STATE, 2), record);
+      }
+      if (record.SUMLEV === "50") {
+        byCounty.set(`${padCode(record.STATE, 2)}${padCode(record.COUNTY, 3)}`, record);
+      }
+    });
+
+    return {
+      sourcePath,
+      latestYear,
+      previousYear,
+      byState,
+      byCounty,
+    };
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (inQuotes) {
+        if (char === '"') {
+          if (text[index + 1] === '"') {
+            field += '"';
+            index += 1;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          field += char;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = true;
+      } else if (char === ",") {
+        row.push(field);
+        field = "";
+      } else if (char === "\n") {
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else if (char !== "\r") {
+        field += char;
+      }
+    }
+
+    if (field || row.length) {
+      row.push(field);
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  function buildPopulationSummary(records, store, options) {
+    const latestYear = store.latestYear;
+    const previousYear = store.previousYear;
+    const estimate = sumRecords(records, `POPESTIMATE${latestYear}`);
+    const previousEstimate = sumRecords(records, `POPESTIMATE${previousYear}`);
+    const change = sumRecords(records, `NPOPCHG${latestYear}`);
+
+    return {
+      latestYear,
+      previousYear,
+      estimate,
+      previousEstimate,
+      change,
+      percentChange: previousEstimate ? (change / previousEstimate) * 100 : null,
+      births: sumRecords(records, `BIRTHS${latestYear}`),
+      deaths: sumRecords(records, `DEATHS${latestYear}`),
+      naturalChange: sumRecords(records, `NATURALCHG${latestYear}`),
+      netMigration: sumRecords(records, `NETMIG${latestYear}`),
+      domesticMigration: sumRecords(records, `DOMESTICMIG${latestYear}`),
+      internationalMigration: sumRecords(records, `INTERNATIONALMIG${latestYear}`),
+      componentCount: options && options.componentCount,
+      sourceNote: options && options.sourceNote,
+      sourcePath: store.sourcePath,
+    };
+  }
+
+  function sumRecords(records, field) {
+    const values = records.map((record) => parseNumeric(record[field])).filter((value) => value !== null);
+    if (!values.length) {
+      return null;
+    }
+    return values.reduce((total, value) => total + value, 0);
+  }
+
+  function parseNumeric(value) {
+    const number = Number(String(value || "").trim());
+    return Number.isFinite(number) ? number : null;
   }
 
   function locateUser() {
@@ -734,6 +1006,24 @@
     return Number.isFinite(number) ? numberFormatter.format(number) : "";
   }
 
+  function formatSignedNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    const sign = number > 0 ? "+" : "";
+    return `${sign}${numberFormatter.format(number)}`;
+  }
+
+  function formatSignedPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    const sign = number > 0 ? "+" : "";
+    return `${sign}${number.toFixed(2)}%`;
+  }
+
   function formatPoint(lat, lon) {
     const latitude = Number(lat);
     const longitude = Number(lon);
@@ -745,6 +1035,11 @@
 
   function hasDisplayValue(value) {
     return value !== undefined && value !== null && value !== "";
+  }
+
+  function padCode(value, length) {
+    const digits = String(value || "").trim();
+    return digits ? digits.padStart(length, "0") : "";
   }
 
   function escapeSql(value) {

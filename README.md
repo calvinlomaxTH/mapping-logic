@@ -7,6 +7,7 @@ A static browser app for exploring United States boundary layers:
 - Metropolitan Statistical Areas, with an optional micropolitan overlay
 
 The app uses Leaflet, Esri Leaflet, OpenStreetMap tiles, and public U.S. Census TIGERweb geography services.
+Selection details are enriched with the local county and state population estimate file at `data/co-est2025-alldata.csv`.
 
 ## Run
 
@@ -62,6 +63,7 @@ git push
 
 ## Data Sources
 
+- Local Census county/state population estimates: `data/co-est2025-alldata.csv`
 - U.S. Census TIGERweb REST services: https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_restmapservice.html
 - TIGERweb current WMS MapServer: https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer
 - OpenStreetMap basemap tiles: https://www.openstreetmap.org/copyright
