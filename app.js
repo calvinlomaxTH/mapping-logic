@@ -10,6 +10,8 @@
   const searchInput = document.getElementById("searchInput");
   const searchMessage = document.getElementById("searchMessage");
   const searchResults = document.getElementById("searchResults");
+  const dataLayerList = document.getElementById("dataLayerList");
+  const dataLayerSummary = document.getElementById("dataLayerSummary");
   const includeMicroInput = document.getElementById("includeMicro");
   const panelToggle = document.getElementById("panelToggle");
   const basemapButton = document.getElementById("basemapButton");
@@ -227,13 +229,138 @@
     },
   };
 
+  const HEALTH_DATA_LAYERS = [
+    {
+      key: "brfss",
+      label: "BRFSS",
+      sourceName: "CDC",
+      sourceUrl: "https://www.cdc.gov/brfss/annual_data/annual_data.htm",
+      coverage: "State; selected MSA",
+      selectionNotes: {
+        states: "State annual survey indicators",
+        counties: "State survey context; county extract needed",
+        metros: "Selected metro indicators where available",
+      },
+    },
+    {
+      key: "cms-care-compare",
+      label: "CMS Care Compare",
+      sourceName: "CMS",
+      sourceUrl: "https://data.cms.gov/provider-data/",
+      coverage: "Provider locations",
+      selectionNotes: {
+        states: "Providers by state",
+        counties: "Providers by county",
+        metros: "Providers matched to MSA footprint",
+      },
+    },
+    {
+      key: "hrsa-health-center-program",
+      label: "HRSA Health Center Program Data",
+      sourceName: "HRSA",
+      sourceUrl: "https://data.hrsa.gov/tools/data-reporting/program-data",
+      coverage: "State; sites",
+      selectionNotes: {
+        states: "UDS health center totals by state",
+        counties: "Health center sites by county",
+        metros: "Sites rolled up to MSA footprint",
+      },
+    },
+    {
+      key: "sahie",
+      label: "SAHIE",
+      sourceName: "Census",
+      sourceUrl: "https://www.census.gov/topics/health/sahie.html",
+      coverage: "State; county",
+      selectionNotes: {
+        states: "Health insurance estimates by state",
+        counties: "Health insurance estimates by county",
+        metros: "County estimates rolled up to MSA",
+      },
+    },
+    {
+      key: "cms-medicare-enrollment",
+      label: "CMS Medicare Enrollment Data",
+      sourceName: "CMS",
+      sourceUrl: "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/medicare-and-medicaid-reports",
+      coverage: "State; county",
+      selectionNotes: {
+        states: "Beneficiary enrollment by state",
+        counties: "Beneficiary enrollment by county",
+        metros: "County enrollment rolled up to MSA",
+      },
+    },
+    {
+      key: "medicaid-enrollment",
+      label: "Medicaid Enrollment Data",
+      sourceName: "CMS",
+      sourceUrl: "https://data.medicaid.gov/",
+      coverage: "State",
+      selectionNotes: {
+        states: "Medicaid and CHIP enrollment by state",
+        counties: "State enrollment context",
+        metros: "State enrollment context",
+      },
+    },
+    {
+      key: "cdc-atsdr-svi",
+      label: "CDC/ATSDR Social Vulnerability Index",
+      sourceName: "CDC/ATSDR",
+      sourceUrl: "https://www.atsdr.cdc.gov/place-health/php/svi/index.html",
+      coverage: "County; tract",
+      selectionNotes: {
+        states: "County and tract vulnerability indexes",
+        counties: "County and tract vulnerability indexes",
+        metros: "County indexes rolled up to MSA",
+      },
+    },
+    {
+      key: "cms-hospital-cost-reports",
+      label: "CMS Hospital Cost Reports",
+      sourceName: "CMS",
+      sourceUrl: "https://data.cms.gov/provider-compliance/cost-reports/hospital-provider-cost-report",
+      coverage: "Hospital providers",
+      selectionNotes: {
+        states: "Hospital reports by provider state",
+        counties: "Hospital reports by provider county",
+        metros: "Hospital reports matched to MSA footprint",
+      },
+    },
+    {
+      key: "nih-seer-cancer-statistics",
+      label: "NIH SEER Cancer Statistics",
+      sourceName: "NIH/NCI",
+      sourceUrl: "https://seer.cancer.gov/statistics/",
+      coverage: "Registry; state; county",
+      selectionNotes: {
+        states: "Cancer statistics by registry and state",
+        counties: "Cancer statistics where county data is available",
+        metros: "County or registry statistics where available",
+      },
+    },
+    {
+      key: "cdc-fluvaxview",
+      label: "CDC FluVaxView",
+      sourceName: "CDC",
+      sourceUrl: "https://www.cdc.gov/fluvaxview/index.html",
+      coverage: "National; state",
+      selectionNotes: {
+        states: "Seasonal vaccination coverage by state",
+        counties: "State vaccination coverage context",
+        metros: "State or selected local coverage context",
+      },
+    },
+  ];
+
   let currentMode = "states";
   let activeLayers = [];
   let highlightLayer = null;
   let locateMarker = null;
   let selectionToken = 0;
+  let currentSelection = null;
   const msaEstimateCache = new Map();
   let populationDataPromise = null;
+  const selectedHealthLayerKeys = new Set(HEALTH_DATA_LAYERS.map((layer) => layer.key));
 
   const map = L.map("map", {
     center: [39.5, -98.35],
@@ -256,6 +383,7 @@
     ).pad(0.12),
   );
 
+  renderDataLayerControls();
   wireControls();
   refreshIcons();
   setMode("states");
@@ -274,6 +402,8 @@
         updateLegend();
       }
     });
+
+    dataLayerList.addEventListener("change", handleDataLayerToggle);
 
     searchForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -326,6 +456,78 @@
     });
 
     map.on("click", handleMapClick);
+  }
+
+  function renderDataLayerControls() {
+    dataLayerList.replaceChildren();
+
+    HEALTH_DATA_LAYERS.forEach((layer) => {
+      const item = document.createElement("div");
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      const copy = document.createElement("span");
+      const name = document.createElement("span");
+      const meta = document.createElement("span");
+      const sourceLink = document.createElement("a");
+
+      item.className = "data-layer-item";
+      item.classList.toggle("is-active", selectedHealthLayerKeys.has(layer.key));
+
+      label.className = "data-layer-option";
+      checkbox.type = "checkbox";
+      checkbox.value = layer.key;
+      checkbox.checked = selectedHealthLayerKeys.has(layer.key);
+      checkbox.setAttribute("aria-label", layer.label);
+
+      copy.className = "data-layer-copy";
+      name.className = "data-layer-name";
+      meta.className = "data-layer-meta";
+      name.textContent = layer.label;
+      meta.textContent = `${layer.sourceName} - ${layer.coverage}`;
+      copy.append(name, meta);
+      label.append(checkbox, copy);
+
+      sourceLink.className = "data-layer-source";
+      sourceLink.href = layer.sourceUrl;
+      sourceLink.target = "_blank";
+      sourceLink.rel = "noreferrer";
+      sourceLink.title = `Open ${layer.label} source`;
+      sourceLink.setAttribute("aria-label", `Open ${layer.label} source`);
+      sourceLink.innerHTML = '<i data-lucide="external-link"></i>';
+
+      item.append(label, sourceLink);
+      dataLayerList.append(item);
+    });
+
+    updateDataLayerSummary();
+  }
+
+  function handleDataLayerToggle(event) {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+      return;
+    }
+
+    const layer = HEALTH_DATA_LAYERS.find((item) => item.key === input.value);
+    if (!layer) {
+      return;
+    }
+
+    if (input.checked) {
+      selectedHealthLayerKeys.add(layer.key);
+    } else {
+      selectedHealthLayerKeys.delete(layer.key);
+    }
+
+    input.closest(".data-layer-item").classList.toggle("is-active", input.checked);
+    updateDataLayerSummary();
+    refreshCurrentSelectionDetails();
+    setStatus(`${layer.label} ${input.checked ? "active" : "hidden"}.`);
+  }
+
+  function updateDataLayerSummary() {
+    const count = selectedHealthLayerKeys.size;
+    dataLayerSummary.textContent = count ? `${numberFormatter.format(count)} active` : "None active";
   }
 
   function setMode(mode) {
@@ -633,6 +835,14 @@
       }
     }
 
+    currentSelection = {
+      feature,
+      config,
+      populationContext: {
+        populationMessage: "Loading local estimate data...",
+      },
+    };
+
     renderDetails(feature.properties, config, {
       populationMessage: "Loading local estimate data...",
     });
@@ -641,6 +851,7 @@
 
   function clearSelection() {
     selectionToken += 1;
+    currentSelection = null;
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
       highlightLayer = null;
@@ -660,6 +871,11 @@
     if (token !== selectionToken) {
       return;
     }
+    currentSelection = {
+      feature,
+      config,
+      populationContext: summary,
+    };
     renderDetails(feature.properties, config, summary);
   }
 
@@ -749,6 +965,18 @@
     return data.features || [];
   }
 
+  function refreshCurrentSelectionDetails() {
+    if (!currentSelection) {
+      return;
+    }
+
+    renderDetails(
+      currentSelection.feature.properties,
+      currentSelection.config,
+      currentSelection.populationContext,
+    );
+  }
+
   function renderDetails(properties, config, populationContext) {
     selectionTitle.textContent = getFeatureName(properties);
     selectionSubtitle.textContent = getFeatureSubtitle(properties, config);
@@ -766,6 +994,7 @@
       ["Water area", formatArea(properties.AREAWATER)],
       ["Center", formatPoint(properties.INTPTLAT || properties.CENTLAT, properties.INTPTLON || properties.CENTLON)],
       ...getPopulationRows(populationContext),
+      ...getHealthDataRows(config),
     ].filter((row) => hasDisplayValue(row[1]));
 
     rows.forEach(([label, value]) => {
@@ -804,6 +1033,23 @@
       ["County components", summary.componentCount ? numberFormatter.format(summary.componentCount) : ""],
       ["Estimate source", summary.sourceNote || summary.sourcePath],
     ];
+  }
+
+  function getHealthDataRows(config) {
+    const layers = HEALTH_DATA_LAYERS.filter((layer) => selectedHealthLayerKeys.has(layer.key));
+    if (!layers.length) {
+      return [];
+    }
+
+    return [
+      ["Health layers", `${numberFormatter.format(layers.length)} active`],
+      ...layers.map((layer) => [layer.label, getHealthLayerNote(layer, config)]),
+    ];
+  }
+
+  function getHealthLayerNote(layer, config) {
+    const note = layer.selectionNotes[config.mode] || "";
+    return `${layer.sourceName} - ${note}`;
   }
 
   function getHousingUnitsValue(properties, context) {
