@@ -6,6 +6,8 @@
   const selectionTitle = document.getElementById("selectionTitle");
   const selectionSubtitle = document.getElementById("selectionSubtitle");
   const detailsList = document.getElementById("detailsList");
+  const expandedDataButton = document.getElementById("expandedDataButton");
+  const expandedDataDashboard = document.getElementById("expandedDataDashboard");
   const searchForm = document.getElementById("searchForm");
   const searchInput = document.getElementById("searchInput");
   const searchMessage = document.getElementById("searchMessage");
@@ -235,6 +237,7 @@
       label: "BRFSS",
       sourceName: "CDC",
       sourceUrl: "https://www.cdc.gov/brfss/annual_data/annual_data.htm",
+      modes: ["states", "metros"],
       coverage: "State; selected MSA",
       selectionNotes: {
         states: "State annual survey indicators",
@@ -247,6 +250,7 @@
       label: "CMS Care Compare",
       sourceName: "CMS",
       sourceUrl: "https://data.cms.gov/provider-data/",
+      modes: ["states", "counties", "metros"],
       coverage: "Provider locations",
       selectionNotes: {
         states: "Providers by state",
@@ -259,6 +263,7 @@
       label: "HRSA Health Center Program Data",
       sourceName: "HRSA",
       sourceUrl: "https://data.hrsa.gov/tools/data-reporting/program-data",
+      modes: ["states", "counties", "metros"],
       coverage: "State; sites",
       selectionNotes: {
         states: "UDS health center totals by state",
@@ -271,6 +276,7 @@
       label: "SAHIE",
       sourceName: "Census",
       sourceUrl: "https://www.census.gov/topics/health/sahie.html",
+      modes: ["states", "counties", "metros"],
       coverage: "State; county",
       selectionNotes: {
         states: "Health insurance estimates by state",
@@ -283,6 +289,7 @@
       label: "CMS Medicare Enrollment Data",
       sourceName: "CMS",
       sourceUrl: "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/medicare-and-medicaid-reports",
+      modes: ["states", "counties", "metros"],
       coverage: "State; county",
       selectionNotes: {
         states: "Beneficiary enrollment by state",
@@ -295,6 +302,7 @@
       label: "Medicaid Enrollment Data",
       sourceName: "CMS",
       sourceUrl: "https://data.medicaid.gov/",
+      modes: ["states"],
       coverage: "State",
       selectionNotes: {
         states: "Medicaid and CHIP enrollment by state",
@@ -307,6 +315,7 @@
       label: "CDC/ATSDR Social Vulnerability Index",
       sourceName: "CDC/ATSDR",
       sourceUrl: "https://www.atsdr.cdc.gov/place-health/php/svi/index.html",
+      modes: ["states", "counties", "metros"],
       coverage: "County; tract",
       selectionNotes: {
         states: "County and tract vulnerability indexes",
@@ -319,6 +328,7 @@
       label: "CMS Hospital Cost Reports",
       sourceName: "CMS",
       sourceUrl: "https://data.cms.gov/provider-compliance/cost-reports/hospital-provider-cost-report",
+      modes: ["states", "counties", "metros"],
       coverage: "Hospital providers",
       selectionNotes: {
         states: "Hospital reports by provider state",
@@ -331,6 +341,7 @@
       label: "NIH SEER Cancer Statistics",
       sourceName: "NIH/NCI",
       sourceUrl: "https://seer.cancer.gov/statistics/",
+      modes: ["states", "counties", "metros"],
       coverage: "Registry; state; county",
       selectionNotes: {
         states: "Cancer statistics by registry and state",
@@ -343,6 +354,7 @@
       label: "CDC FluVaxView",
       sourceName: "CDC",
       sourceUrl: "https://www.cdc.gov/fluvaxview/index.html",
+      modes: ["states"],
       coverage: "National; state",
       selectionNotes: {
         states: "Seasonal vaccination coverage by state",
@@ -358,6 +370,7 @@
   let locateMarker = null;
   let selectionToken = 0;
   let currentSelection = null;
+  let dashboardExpanded = false;
   const msaEstimateCache = new Map();
   let populationDataPromise = null;
   const selectedHealthLayerKeys = new Set(HEALTH_DATA_LAYERS.map((layer) => layer.key));
@@ -404,6 +417,7 @@
     });
 
     dataLayerList.addEventListener("change", handleDataLayerToggle);
+    expandedDataButton.addEventListener("click", toggleExpandedDashboard);
 
     searchForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -461,7 +475,9 @@
   function renderDataLayerControls() {
     dataLayerList.replaceChildren();
 
-    HEALTH_DATA_LAYERS.forEach((layer) => {
+    const applicableLayers = getApplicableHealthLayers(currentMode);
+
+    applicableLayers.forEach((layer) => {
       const item = document.createElement("div");
       const label = document.createElement("label");
       const checkbox = document.createElement("input");
@@ -500,6 +516,7 @@
     });
 
     updateDataLayerSummary();
+    refreshIcons();
   }
 
   function handleDataLayerToggle(event) {
@@ -519,15 +536,27 @@
       selectedHealthLayerKeys.delete(layer.key);
     }
 
-    input.closest(".data-layer-item").classList.toggle("is-active", input.checked);
+    const item = input.closest(".data-layer-item");
+    if (item) {
+      item.classList.toggle("is-active", input.checked);
+    }
     updateDataLayerSummary();
     refreshCurrentSelectionDetails();
     setStatus(`${layer.label} ${input.checked ? "active" : "hidden"}.`);
   }
 
   function updateDataLayerSummary() {
-    const count = selectedHealthLayerKeys.size;
-    dataLayerSummary.textContent = count ? `${numberFormatter.format(count)} active` : "None active";
+    const applicableLayers = getApplicableHealthLayers(currentMode);
+    const activeCount = getSelectedApplicableHealthLayers(currentMode).length;
+    dataLayerSummary.textContent = `${numberFormatter.format(activeCount)}/${numberFormatter.format(applicableLayers.length)} active`;
+  }
+
+  function getApplicableHealthLayers(mode) {
+    return HEALTH_DATA_LAYERS.filter((layer) => layer.modes.includes(mode));
+  }
+
+  function getSelectedApplicableHealthLayers(mode) {
+    return getApplicableHealthLayers(mode).filter((layer) => selectedHealthLayerKeys.has(layer.key));
   }
 
   function setMode(mode) {
@@ -542,6 +571,7 @@
     includeMicroInput.disabled = !microEnabled;
     includeMicroInput.closest(".toggle").classList.toggle("is-disabled", !microEnabled);
 
+    renderDataLayerControls();
     rebuildActiveLayers();
     clearSearch();
     clearSelection();
@@ -807,6 +837,7 @@
   function selectFeature(feature, config, options) {
     const shouldFit = Boolean(options && options.fit);
     const token = ++selectionToken;
+    dashboardExpanded = false;
 
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
@@ -852,6 +883,7 @@
   function clearSelection() {
     selectionToken += 1;
     currentSelection = null;
+    dashboardExpanded = false;
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
       highlightLayer = null;
@@ -859,6 +891,14 @@
     selectionTitle.textContent = "Nothing selected";
     selectionSubtitle.textContent = "Click a boundary or choose a search result.";
     detailsList.replaceChildren();
+    expandedDataButton.classList.add("is-hidden");
+    expandedDataButton.setAttribute("aria-expanded", "false");
+    const buttonText = expandedDataButton.querySelector("span");
+    if (buttonText) {
+      buttonText.textContent = "Expanded data";
+    }
+    expandedDataDashboard.classList.add("is-hidden");
+    expandedDataDashboard.replaceChildren();
   }
 
   async function hydratePopulationDetails(feature, config, token) {
@@ -977,12 +1017,40 @@
     );
   }
 
+  function toggleExpandedDashboard() {
+    if (!currentSelection) {
+      return;
+    }
+
+    dashboardExpanded = !dashboardExpanded;
+    refreshCurrentSelectionDetails();
+  }
+
+  function updateExpandedDashboard(properties, config, populationContext) {
+    expandedDataButton.classList.remove("is-hidden");
+    expandedDataButton.setAttribute("aria-expanded", String(dashboardExpanded));
+    const buttonText = expandedDataButton.querySelector("span");
+    if (buttonText) {
+      buttonText.textContent = dashboardExpanded ? "Hide expanded data" : "Expanded data";
+    }
+
+    if (!dashboardExpanded) {
+      expandedDataDashboard.classList.add("is-hidden");
+      expandedDataDashboard.replaceChildren();
+      return;
+    }
+
+    expandedDataDashboard.classList.remove("is-hidden");
+    renderExpandedDashboard(properties, config, populationContext);
+  }
+
   function renderDetails(properties, config, populationContext) {
     selectionTitle.textContent = getFeatureName(properties);
     selectionSubtitle.textContent = getFeatureSubtitle(properties, config);
     detailsList.replaceChildren();
 
     const rows = [
+      ...getPopulationRows(populationContext),
       ["Type", config.singular],
       ["GEOID", properties.GEOID],
       ["CBSA", properties.CBSA],
@@ -993,8 +1061,7 @@
       ["Land area", formatArea(properties.AREALAND)],
       ["Water area", formatArea(properties.AREAWATER)],
       ["Center", formatPoint(properties.INTPTLAT || properties.CENTLAT, properties.INTPTLON || properties.CENTLON)],
-      ...getPopulationRows(populationContext),
-      ...getHealthDataRows(config),
+      ...getHealthDataRows(config, properties),
     ].filter((row) => hasDisplayValue(row[1]));
 
     rows.forEach(([label, value]) => {
@@ -1004,6 +1071,180 @@
       description.textContent = value;
       detailsList.append(term, description);
     });
+
+    updateExpandedDashboard(properties, config, populationContext);
+  }
+
+  function renderExpandedDashboard(properties, config, populationContext) {
+    expandedDataDashboard.replaceChildren();
+
+    const summary = populationContext && populationContext.populationSummary;
+    const loadingMessage = populationContext && populationContext.populationMessage;
+    const kpiGrid = document.createElement("div");
+    kpiGrid.className = "dashboard-kpis";
+
+    const kpis = summary
+      ? [
+          ["Population", formatNumberValue(summary.estimate)],
+          ["Growth", formatSignedPercent(summary.percentChange)],
+          ["Net migration", formatSignedNumber(summary.netMigration)],
+          ["Births / deaths", `${formatNumberValue(summary.births)} / ${formatNumberValue(summary.deaths)}`],
+        ]
+      : [["Population", loadingMessage || "No local population record"], ["Data layers", `${getSelectedApplicableHealthLayers(config.mode).length} active`]];
+
+    kpis.forEach(([label, value]) => {
+      kpiGrid.append(createDashboardKpi(label, value));
+    });
+    expandedDataDashboard.append(kpiGrid);
+
+    if (summary) {
+      expandedDataDashboard.append(createPopulationTrendPanel(summary));
+      expandedDataDashboard.append(createPopulationDriverPanel(summary));
+    } else {
+      expandedDataDashboard.append(createDashboardMessage(loadingMessage || "Population data is not available for this selection."));
+    }
+
+    expandedDataDashboard.append(createDataLayerDashboard(properties, config));
+  }
+
+  function createDashboardKpi(label, value) {
+    const card = document.createElement("div");
+    const valueElement = document.createElement("strong");
+    const labelElement = document.createElement("span");
+
+    card.className = "dashboard-kpi";
+    valueElement.textContent = value || "--";
+    labelElement.textContent = label;
+    card.append(valueElement, labelElement);
+    return card;
+  }
+
+  function createPopulationTrendPanel(summary) {
+    const panel = createDashboardPanel("Population trend");
+    const chart = document.createElement("div");
+    const series = (summary.estimateSeries || []).filter((item) => Number.isFinite(item.value));
+    const values = series.map((item) => item.value);
+
+    if (!values.length) {
+      panel.append(createDashboardMessage("No estimate series is available."));
+      return panel;
+    }
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+
+    chart.className = "mini-bar-chart";
+    series.forEach((item) => {
+      const bar = document.createElement("div");
+      const fill = document.createElement("span");
+      const label = document.createElement("em");
+      const height = 18 + ((item.value - min) / span) * 72;
+
+      bar.className = "mini-bar";
+      fill.style.height = `${Math.round(height)}%`;
+      fill.title = `${item.year}: ${formatNumberValue(item.value)}`;
+      label.textContent = String(item.year).slice(-2);
+      bar.append(fill, label);
+      chart.append(bar);
+    });
+
+    panel.append(chart);
+    return panel;
+  }
+
+  function createPopulationDriverPanel(summary) {
+    const panel = createDashboardPanel(`${summary.latestYear} change drivers`);
+    const rows = [
+      ["Natural", summary.naturalChange],
+      ["Domestic", summary.domesticMigration],
+      ["International", summary.internationalMigration],
+    ];
+    const max = Math.max(...rows.map(([, value]) => Math.abs(Number(value) || 0)), 1);
+    const list = document.createElement("div");
+
+    list.className = "driver-list";
+    rows.forEach(([label, value]) => {
+      const row = document.createElement("div");
+      const name = document.createElement("span");
+      const track = document.createElement("div");
+      const fill = document.createElement("span");
+      const number = document.createElement("strong");
+      const numericValue = Number(value) || 0;
+
+      row.className = "driver-row";
+      name.textContent = label;
+      track.className = "driver-track";
+      fill.className = numericValue < 0 ? "is-negative" : "is-positive";
+      fill.style.width = `${Math.max(6, Math.round((Math.abs(numericValue) / max) * 100))}%`;
+      number.textContent = formatSignedNumber(value);
+      track.append(fill);
+      row.append(name, track, number);
+      list.append(row);
+    });
+
+    panel.append(list);
+    return panel;
+  }
+
+  function createDataLayerDashboard(properties, config) {
+    const panel = createDashboardPanel("Applicable data layers");
+    const layers = getSelectedApplicableHealthLayers(config.mode);
+
+    if (!layers.length) {
+      panel.append(createDashboardMessage("No applicable data layers are active for this boundary type."));
+      return panel;
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "dashboard-layer-grid";
+    layers.forEach((layer) => {
+      grid.append(createDataLayerCard(layer, properties, config));
+    });
+    panel.append(grid);
+    return panel;
+  }
+
+  function createDataLayerCard(layer, properties, config) {
+    const card = document.createElement("article");
+    const header = document.createElement("div");
+    const title = document.createElement("h4");
+    const source = document.createElement("span");
+    const match = document.createElement("p");
+    const status = document.createElement("div");
+    const link = document.createElement("a");
+
+    card.className = "dashboard-layer-card";
+    header.className = "dashboard-layer-header";
+    title.textContent = layer.label;
+    source.textContent = layer.sourceName;
+    header.append(title, source);
+    match.textContent = getHealthLayerNote(layer, config, properties);
+    status.className = "dashboard-layer-status";
+    status.textContent = "Source values not imported locally";
+    link.href = layer.sourceUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = "Source";
+    card.append(header, match, status, link);
+    return card;
+  }
+
+  function createDashboardPanel(title) {
+    const panel = document.createElement("section");
+    const heading = document.createElement("h3");
+
+    panel.className = "dashboard-panel";
+    heading.textContent = title;
+    panel.append(heading);
+    return panel;
+  }
+
+  function createDashboardMessage(message) {
+    const element = document.createElement("div");
+    element.className = "dashboard-message";
+    element.textContent = message;
+    return element;
   }
 
   function getPopulationRows(context) {
@@ -1035,21 +1276,36 @@
     ];
   }
 
-  function getHealthDataRows(config) {
-    const layers = HEALTH_DATA_LAYERS.filter((layer) => selectedHealthLayerKeys.has(layer.key));
+  function getHealthDataRows(config, properties) {
+    const layers = getSelectedApplicableHealthLayers(config.mode);
     if (!layers.length) {
       return [];
     }
 
     return [
-      ["Health layers", `${numberFormatter.format(layers.length)} active`],
-      ...layers.map((layer) => [layer.label, getHealthLayerNote(layer, config)]),
+      ["Data layers", `${numberFormatter.format(layers.length)} active for ${config.singular.toLowerCase()}`],
+      ...layers.map((layer) => [layer.label, getHealthLayerNote(layer, config, properties)]),
     ];
   }
 
-  function getHealthLayerNote(layer, config) {
+  function getHealthLayerNote(layer, config, properties) {
     const note = layer.selectionNotes[config.mode] || "";
-    return `${layer.sourceName} - ${note}`;
+    return `${layer.sourceName} - ${note}${properties ? ` (${getDataLayerMatchKey(properties, config)})` : ""}`;
+  }
+
+  function getDataLayerMatchKey(properties, config) {
+    if (config.mode === "states") {
+      const stateId = properties.STATE || properties.GEOID || "";
+      return stateId ? `STATE ${stateId}` : "State boundary";
+    }
+    if (config.mode === "counties") {
+      const countyId =
+        properties.GEOID ||
+        `${padCode(properties.STATE, 2)}${padCode(properties.COUNTY, 3)}`;
+      return countyId ? `COUNTY ${countyId}` : "County boundary";
+    }
+    const cbsaId = properties.CBSA || properties.GEOID || "";
+    return cbsaId ? `CBSA ${cbsaId}` : "MSA boundary";
   }
 
   function getHousingUnitsValue(properties, context) {
@@ -1140,6 +1396,7 @@
 
     return {
       sourcePath,
+      estimateYears,
       latestYear,
       previousYear,
       byState,
@@ -1204,6 +1461,10 @@
       latestYear,
       previousYear,
       estimate,
+      estimateSeries: store.estimateYears.map((year) => ({
+        year,
+        value: sumRecords(records, `POPESTIMATE${year}`),
+      })),
       previousEstimate,
       change,
       percentChange: previousEstimate ? (change / previousEstimate) * 100 : null,

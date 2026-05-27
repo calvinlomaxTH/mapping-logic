@@ -8,7 +8,7 @@ A static browser app for exploring United States boundary layers:
 
 The app uses Leaflet, Esri Leaflet, OpenStreetMap tiles, and public U.S. Census TIGERweb geography services.
 Selection details are enriched with the local county and state population estimate file at `data/co-est2025-alldata.csv`.
-The sidebar also includes a configurable health data layer catalog for BRFSS, CMS Care Compare, HRSA Health Center Program data, SAHIE, Medicare and Medicaid enrollment, CDC/ATSDR SVI, CMS hospital cost reports, NIH SEER cancer statistics, and CDC FluVaxView.
+The sidebar also includes a configurable health data layer catalog for BRFSS, CMS Care Compare, HRSA Health Center Program data, SAHIE, Medicare and Medicaid enrollment, CDC/ATSDR SVI, CMS hospital cost reports, NIH SEER cancer statistics, and CDC FluVaxView. The app filters that catalog by the active geography mode and shows an expanded dashboard for the selected boundary. The population charts are computed from the local CSV; the health source cards show geographic matching and source status until local extracts or API mappings are added.
 
 ## Run
 

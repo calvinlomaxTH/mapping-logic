@@ -17,8 +17,8 @@
         <header class="brand">
           <img class="brand-logo" src="./assets/third-horizon-logo-white.png" alt="Third Horizon" />
           <div class="brand-copy">
-            <h1>ODIN Map Viewer</h1>
-            <p>Third Horizon Geographic Intelligence</p>
+            <h1>ODIN GeoData Visualizer</h1>
+            <p>Third Horizon Strategies</p>
           </div>
         </header>
 
@@ -109,6 +109,16 @@
           <div class="selection-title" id="selectionTitle">Nothing selected</div>
           <div class="selection-subtitle" id="selectionSubtitle">Click a boundary or choose a search result.</div>
           <dl class="details-list" id="detailsList"></dl>
+          <button
+            class="dashboard-toggle is-hidden"
+            id="expandedDataButton"
+            type="button"
+            aria-expanded="false"
+          >
+            <i data-lucide="bar-chart-3"></i>
+            <span>Expanded data</span>
+          </button>
+          <div class="expanded-dashboard is-hidden" id="expandedDataDashboard"></div>
         </section>
 
         <footer class="source-note">

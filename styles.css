@@ -318,6 +318,7 @@ a {
 .toolbar-button:focus-visible,
 .segment:focus-visible,
 .result-item:focus-visible,
+.dashboard-toggle:focus-visible,
 .data-layer-option:focus-within,
 .data-layer-source:focus-visible,
 .panel-toggle:focus-visible {
@@ -328,6 +329,7 @@ a {
 .sidebar .icon-button:focus-visible,
 .sidebar .segment:focus-visible,
 .sidebar .result-item:focus-visible,
+.sidebar .dashboard-toggle:focus-visible,
 .sidebar .data-layer-option:focus-within,
 .sidebar .data-layer-source:focus-visible {
   outline-color: rgba(247, 197, 96, 0.42);
@@ -460,6 +462,218 @@ a {
   color: #ffffff;
   font-size: 0.88rem;
   font-weight: 650;
+}
+
+.dashboard-toggle {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  margin-top: 16px;
+  border: 1px solid rgba(247, 197, 96, 0.55);
+  border-radius: 8px;
+  color: #000000;
+  background: var(--gold);
+  font-size: 0.91rem;
+  font-weight: 800;
+}
+
+.dashboard-toggle:hover {
+  background: #ffd781;
+}
+
+.dashboard-toggle svg {
+  width: 17px;
+  height: 17px;
+}
+
+.dashboard-toggle.is-hidden,
+.expanded-dashboard.is-hidden {
+  display: none;
+}
+
+.expanded-dashboard {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.dashboard-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dashboard-kpi,
+.dashboard-panel {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dashboard-kpi {
+  padding: 10px;
+}
+
+.dashboard-kpi strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--gold);
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.dashboard-kpi span {
+  display: block;
+  margin-top: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.74rem;
+}
+
+.dashboard-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.dashboard-panel h3 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.mini-bar-chart {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: end;
+  gap: 7px;
+  min-height: 112px;
+}
+
+.mini-bar {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: minmax(72px, 1fr) 18px;
+  gap: 6px;
+  align-items: end;
+}
+
+.mini-bar span {
+  display: block;
+  align-self: end;
+  min-height: 8px;
+  border-radius: 5px 5px 2px 2px;
+  background: var(--gold);
+}
+
+.mini-bar em {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.7rem;
+  font-style: normal;
+  text-align: center;
+}
+
+.driver-list {
+  display: grid;
+  gap: 9px;
+}
+
+.driver-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 72px;
+  gap: 8px;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 0.76rem;
+}
+
+.driver-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.driver-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.driver-track .is-positive {
+  background: var(--gold);
+}
+
+.driver-track .is-negative {
+  background: #d0d0d0;
+}
+
+.driver-row strong {
+  overflow-wrap: anywhere;
+  color: #ffffff;
+  font-size: 0.74rem;
+  text-align: right;
+}
+
+.dashboard-layer-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-layer-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.dashboard-layer-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.dashboard-layer-card h4 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #ffffff;
+  font-size: 0.83rem;
+  line-height: 1.2;
+}
+
+.dashboard-layer-header span,
+.dashboard-layer-card p,
+.dashboard-layer-status {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.72rem;
+  line-height: 1.32;
+}
+
+.dashboard-layer-status {
+  color: var(--gold);
+}
+
+.dashboard-layer-card a {
+  width: max-content;
+  max-width: 100%;
+  color: #ffffff;
+  font-size: 0.74rem;
+}
+
+.dashboard-message {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .source-note {
