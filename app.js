@@ -28,6 +28,10 @@
   const CURRENT_WMS =
     "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer";
   const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
+  const CDC_SVI_COUNTY_LAYER_URL =
+    "https://onemap.cdc.gov/onemapservices/rest/services/SVI/CDC_ATSDR_Social_Vulnerability_Index_2022_USA/FeatureServer/1";
+  const CMS_MEDICARE_ENROLLMENT_API =
+    "https://data.cms.gov/data-api/v1/dataset/d7fabe1e-d19b-4333-9eff-e80e0643f2fd/data-viewer";
   const DYNAMIC_LAYER_DPI = 24;
   const SQ_METERS_PER_SQ_MILE = 2589988.110336;
   const US_STATE_CODES = [
@@ -291,6 +295,7 @@
       sourceUrl: "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/medicare-and-medicaid-reports",
       modes: ["states", "counties", "metros"],
       coverage: "State; county",
+      liveModes: ["states", "counties"],
       selectionNotes: {
         states: "Beneficiary enrollment by state",
         counties: "Beneficiary enrollment by county",
@@ -317,6 +322,7 @@
       sourceUrl: "https://www.atsdr.cdc.gov/place-health/php/svi/index.html",
       modes: ["states", "counties", "metros"],
       coverage: "County; tract",
+      liveModes: ["states", "counties"],
       selectionNotes: {
         states: "County and tract vulnerability indexes",
         counties: "County and tract vulnerability indexes",
@@ -371,8 +377,10 @@
   let selectionToken = 0;
   let currentSelection = null;
   let dashboardExpanded = false;
+  let dashboardDataToken = 0;
   const msaEstimateCache = new Map();
   let populationDataPromise = null;
+  const dataLayerValueCache = new Map();
   const selectedHealthLayerKeys = new Set(HEALTH_DATA_LAYERS.map((layer) => layer.key));
 
   const map = L.map("map", {
@@ -882,6 +890,7 @@
 
   function clearSelection() {
     selectionToken += 1;
+    dashboardDataToken += 1;
     currentSelection = null;
     dashboardExpanded = false;
     if (highlightLayer) {
@@ -1035,6 +1044,7 @@
     }
 
     if (!dashboardExpanded) {
+      dashboardDataToken += 1;
       expandedDataDashboard.classList.add("is-hidden");
       expandedDataDashboard.replaceChildren();
       return;
@@ -1080,6 +1090,7 @@
 
     const summary = populationContext && populationContext.populationSummary;
     const loadingMessage = populationContext && populationContext.populationMessage;
+    const dashboardToken = ++dashboardDataToken;
     const kpiGrid = document.createElement("div");
     kpiGrid.className = "dashboard-kpis";
 
@@ -1105,6 +1116,7 @@
     }
 
     expandedDataDashboard.append(createDataLayerDashboard(properties, config));
+    hydrateDataLayerValues(properties, config, dashboardToken);
   }
 
   function createDashboardKpi(label, value) {
@@ -1212,21 +1224,27 @@
     const source = document.createElement("span");
     const match = document.createElement("p");
     const status = document.createElement("div");
+    const metrics = document.createElement("div");
     const link = document.createElement("a");
 
     card.className = "dashboard-layer-card";
+    card.dataset.layerKey = layer.key;
     header.className = "dashboard-layer-header";
     title.textContent = layer.label;
     source.textContent = layer.sourceName;
     header.append(title, source);
     match.textContent = getHealthLayerNote(layer, config, properties);
     status.className = "dashboard-layer-status";
-    status.textContent = "Source values not imported locally";
+    status.textContent = getDataLayerStatus(layer, properties, config);
+    metrics.className = "dashboard-layer-metrics";
+    getDefaultLayerMetrics(layer, properties, config).forEach((metric) => {
+      metrics.append(createLayerMetric(metric.label, metric.value));
+    });
     link.href = layer.sourceUrl;
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = "Source";
-    card.append(header, match, status, link);
+    card.append(header, match, status, metrics, link);
     return card;
   }
 
