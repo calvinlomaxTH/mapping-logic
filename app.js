@@ -167,6 +167,11 @@
     "56": "WY",
   };
   const numberFormatter = new Intl.NumberFormat("en-US");
+  const currencyFormatter = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
 
   const STYLE = {
     states: {
@@ -395,6 +400,60 @@
     },
   ];
 
+  const METRIC_EXPLANATIONS = {
+    Join: "Identifier used to match the selected geography to the local extract.",
+    Level: "Geographic level used for this card.",
+    Coverage: "Smallest geography or source footprint available for this layer.",
+    "Heart attack": "Percent of BRFSS adult respondents who reported ever being told they had a heart attack.",
+    Depression: "Percent of BRFSS adult respondents who reported ever being told they had a depressive disorder.",
+    Diabetes: "Percent of BRFSS adult respondents who reported ever being told they had diabetes.",
+    "High blood pressure": "Percent of BRFSS adult respondents who reported ever being told they had high blood pressure.",
+    "Health coverage": "Percent of BRFSS adult respondents with any kind of health care coverage.",
+    Hospitals: "Number of hospitals in the CMS Care Compare extract matched to this geography.",
+    "Avg overall rating": "Average CMS hospital overall star rating for matched hospitals with a numeric rating.",
+    "Service delivery sites": "Number of HRSA Health Center Program service delivery or look-alike sites matched to this geography.",
+    Uninsured: "Estimated number or percent of people without health insurance, depending on the source metric.",
+    Insured: "Estimated number of people with health insurance.",
+    "Uninsured rate": "Estimated percent of people without health insurance.",
+    "Insured rate": "Estimated percent of people with health insurance.",
+    Beneficiaries: "Total Medicare beneficiaries in the CMS enrollment extract.",
+    "Medicare Advantage": "Medicare beneficiaries enrolled in Medicare Advantage or other managed care plans.",
+    "MA share": "Medicare Advantage beneficiaries divided by total Medicare beneficiaries.",
+    Medicaid: "People enrolled in Medicaid in the latest imported Medicaid enrollment period.",
+    CHIP: "People enrolled in the Children's Health Insurance Program in the latest imported period.",
+    Unknown: "Enrollment records whose source program type was not specified.",
+    "Overall SVI percentile": "CDC/ATSDR overall Social Vulnerability Index percentile; higher values mean greater relative vulnerability.",
+    "Socioeconomic theme": "SVI percentile for socioeconomic status indicators.",
+    "Household theme": "SVI percentile for household characteristics indicators.",
+    "Poverty 150%": "Percent of people living below 150 percent of the poverty level in the SVI extract.",
+    Unemployment: "Percent unemployed in the SVI extract.",
+    Reports: "Number of CMS hospital cost report records matched to this geography.",
+    Beds: "Total hospital beds reported in matched CMS hospital cost reports.",
+    "Total costs": "Total costs reported across matched CMS hospital cost reports.",
+    "Net patient revenue": "Net patient revenue reported across matched CMS hospital cost reports.",
+    "All-cancer incidence rate": "Age-adjusted all-cancer incidence rate per 100,000 people.",
+    "Average annual cases": "Average annual number of cancer cases in the reporting period.",
+    "Recent 5-year trend": "Annual percent change in the recent five-year cancer incidence trend.",
+    "Trend classification": "Whether the recent cancer incidence trend is rising, falling, or stable.",
+    "Flu vaccine coverage": "Percent with influenza vaccination coverage in the latest imported FluVaxView estimate.",
+  };
+
+  const PER_CAPITA_METRICS = {
+    Hospitals: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    "Service delivery sites": { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    Uninsured: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    Insured: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    Beneficiaries: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    "Medicare Advantage": { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    Medicaid: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    CHIP: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    Unknown: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    Beds: { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+    "Total costs": { scale: 1, unit: "per resident", kind: "currency" },
+    "Net patient revenue": { scale: 1, unit: "per resident", kind: "currency" },
+    "Average annual cases": { scale: 100000, unit: "per 100k residents", kind: "decimal" },
+  };
+
   let currentMode = "states";
   let activeLayers = [];
   let highlightLayer = null;
@@ -489,6 +548,7 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         setBasemapMenuOpen(false);
+        closeMetricHelp();
       }
     });
 
@@ -916,6 +976,7 @@
     const shouldFit = Boolean(options && options.fit);
     const token = ++selectionToken;
     dashboardExpanded = false;
+    closeMetricHelp();
 
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
@@ -963,6 +1024,7 @@
     dashboardDataToken += 1;
     currentSelection = null;
     dashboardExpanded = false;
+    closeMetricHelp();
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
       highlightLayer = null;
@@ -1196,6 +1258,7 @@
 
     container.append(createDataLayerDashboard(properties, config));
     hydrateDataLayerValues(properties, config, dashboardToken, container);
+    refreshIcons();
   }
 
   function createDashboardKpi(label, value) {
@@ -1304,10 +1367,13 @@
     const match = document.createElement("p");
     const status = document.createElement("div");
     const metrics = document.createElement("div");
+    const footer = document.createElement("div");
     const link = document.createElement("a");
+    const helpButton = document.createElement("button");
 
     card.className = "dashboard-layer-card";
     card.dataset.layerKey = layer.key;
+    card._defaultMetrics = getDefaultLayerMetrics(layer, properties, config);
     header.className = "dashboard-layer-header";
     title.textContent = layer.label;
     source.textContent = layer.sourceName;
@@ -1316,14 +1382,22 @@
     status.className = "dashboard-layer-status";
     status.textContent = getDataLayerStatus(layer, properties, config);
     metrics.className = "dashboard-layer-metrics";
-    getDefaultLayerMetrics(layer, properties, config).forEach((metric) => {
+    card._defaultMetrics.forEach((metric) => {
       metrics.append(createLayerMetric(metric.label, metric.value));
     });
+    footer.className = "dashboard-layer-footer";
     link.href = layer.sourceUrl;
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = "Source";
-    card.append(header, match, status, metrics, link);
+    helpButton.className = "metric-help-button";
+    helpButton.type = "button";
+    helpButton.title = `Explain ${layer.label} metrics`;
+    helpButton.setAttribute("aria-label", `Explain ${layer.label} metrics`);
+    helpButton.innerHTML = '<i data-lucide="circle-help"></i>';
+    helpButton.addEventListener("click", () => openMetricHelp(card, layer, config));
+    footer.append(link, helpButton);
+    card.append(header, match, status, metrics, footer);
     return card;
   }
 
@@ -1370,9 +1444,13 @@
       return;
     }
 
+    const populationStore = await getPopulationData();
+    if (dashboardToken !== dashboardDataToken) {
+      return;
+    }
     getSelectedApplicableHealthLayers(config.mode).forEach((layer) => {
-      const record = getHealthLayerRecord(store, layer, properties, config);
-      updateDataLayerCard(layer.key, record, store.sources && store.sources[layer.key], container);
+      const record = getHealthLayerRecord(store, layer, properties, config, populationStore);
+      updateDataLayerCard(layer, record, store.sources && store.sources[layer.key], container, store, config, populationStore);
     });
   }
 
@@ -1388,7 +1466,7 @@
     return healthDataPromise;
   }
 
-  function getHealthLayerRecord(store, layer, properties, config) {
+  function getHealthLayerRecord(store, layer, properties, config, populationStore) {
     if (config.mode === "states") {
       const stateId = getStateIdForProperties(properties);
       return (store.states && store.states[stateId] && store.states[stateId][layer.key]) || null;
@@ -1404,18 +1482,19 @@
     if (directRecord) {
       return directRecord;
     }
-    return aggregateHealthLayerForMsa(store, layer);
+    return aggregateHealthLayerForMsa(store, layer, populationStore);
   }
 
-  function aggregateHealthLayerForMsa(store, layer) {
+  function aggregateHealthLayerForMsa(store, layer, populationStore) {
     const summary =
       currentSelection &&
       currentSelection.populationContext &&
       currentSelection.populationContext.populationSummary;
     const countyIds = summary && Array.isArray(summary.countyIds) ? summary.countyIds : [];
-    const records = countyIds
-      .map((countyId) => store.counties && store.counties[countyId] && store.counties[countyId][layer.key])
-      .filter(Boolean);
+    const recordEntries = countyIds
+      .map((countyId) => [countyId, store.counties && store.counties[countyId] && store.counties[countyId][layer.key]])
+      .filter(([, record]) => Boolean(record));
+    const records = recordEntries.map(([, record]) => record);
 
     if (!records.length) {
       return null;
@@ -1453,19 +1532,135 @@
         value: formatHealthMetricValue(raw, group.kind),
       };
     });
-
     return {
       title: layer.label,
       period: Array.from(new Set(records.map((record) => record.period).filter(Boolean))).join(", "),
       source: records[0].source,
       metrics,
       note: `Aggregated from ${numberFormatter.format(records.length)} counties`,
+      comparisonLabel: "selected MSA component counties",
+      metricComparisons: buildIqrByMetric(recordEntries, "counties", populationStore),
     };
   }
 
-  function updateDataLayerCard(layerKey, record, source, container) {
+  function buildMetricComparisonData(store, layer, config, record, populationStore) {
+    if (record && record.metricComparisons) {
+      return {
+        scopeLabel: record.comparisonLabel || "matched component records",
+        metrics: record.metricComparisons,
+      };
+    }
+
+    const scope = getComparisonScope(config);
+    const recordEntries = Object.entries((store && store[scope.key]) || {})
+      .map(([geoid, item]) => [geoid, item && item[layer.key]])
+      .filter(([, item]) => Boolean(item));
+
+    return {
+      scopeLabel: scope.label,
+      metrics: buildIqrByMetric(recordEntries, scope.key, populationStore),
+    };
+  }
+
+  function getComparisonScope(config) {
+    if (config.mode === "states") {
+      return { key: "states", label: "state records" };
+    }
+    if (config.mode === "counties") {
+      return { key: "counties", label: "county records" };
+    }
+    return { key: "cbsas", label: "CBSA records" };
+  }
+
+  function buildIqrByMetric(recordEntries, scopeKey, populationStore) {
+    const groups = new Map();
+    recordEntries.forEach(([geoid, record]) => {
+      (record.metrics || []).forEach((metricItem) => {
+        const value = Number(metricItem.raw);
+        if (!Number.isFinite(value)) {
+          return;
+        }
+        if (!groups.has(metricItem.label)) {
+          groups.set(metricItem.label, {
+            values: [],
+            kind: metricItem.kind,
+            perCapitaValues: [],
+            perCapitaRule: getPerCapitaRule(metricItem),
+          });
+        }
+        const group = groups.get(metricItem.label);
+        group.values.push(value);
+        const population = getComparisonPopulation(scopeKey, geoid, populationStore);
+        if (group.perCapitaRule && population) {
+          group.perCapitaValues.push((value / population) * group.perCapitaRule.scale);
+        }
+      });
+    });
+
+    return Object.fromEntries(
+      Array.from(groups.entries()).map(([label, group]) => [
+        label,
+        {
+          raw: buildIqrSummary(group.values, group.kind),
+          perCapita: buildIqrSummary(group.perCapitaValues, group.perCapitaRule && group.perCapitaRule.kind),
+          perCapitaRule: group.perCapitaRule,
+        },
+      ]),
+    );
+  }
+
+  function buildIqrSummary(values, kind) {
+    const sorted = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    if (!sorted.length) {
+      return null;
+    }
+
+    return {
+      q1: quantile(sorted, 0.25),
+      q3: quantile(sorted, 0.75),
+      count: sorted.length,
+      kind,
+    };
+  }
+
+  function getPerCapitaRule(metricItem) {
+    if (!metricItem || metricItem.kind === "percent" || metricItem.kind === "text") {
+      return null;
+    }
+    return PER_CAPITA_METRICS[metricItem.label] || null;
+  }
+
+  function getComparisonPopulation(scopeKey, geoid, populationStore) {
+    if (!populationStore || !geoid) {
+      return null;
+    }
+
+    const populationField = `POPESTIMATE${populationStore.latestYear}`;
+    let populationRecord = null;
+    if (scopeKey === "states") {
+      populationRecord = populationStore.byState.get(padCode(geoid, 2));
+    } else if (scopeKey === "counties") {
+      populationRecord = populationStore.byCounty.get(String(geoid).padStart(5, "0"));
+    }
+
+    const population = populationRecord ? parseNumeric(populationRecord[populationField]) : null;
+    return population && population > 0 ? population : null;
+  }
+
+  function quantile(sortedValues, probability) {
+    if (sortedValues.length === 1) {
+      return sortedValues[0];
+    }
+    const position = (sortedValues.length - 1) * probability;
+    const lowerIndex = Math.floor(position);
+    const upperIndex = Math.ceil(position);
+    const weight = position - lowerIndex;
+    return sortedValues[lowerIndex] * (1 - weight) + sortedValues[upperIndex] * weight;
+  }
+
+  function updateDataLayerCard(layer, record, source, container, store, config, populationStore) {
     const card = Array.from(container.querySelectorAll(".dashboard-layer-card")).find(
-      (item) => item.dataset.layerKey === layerKey,
+      (item) => item.dataset.layerKey === layer.key,
     );
     if (!card) {
       return;
@@ -1478,6 +1673,8 @@
     }
 
     metrics.replaceChildren();
+    card._healthRecord = record || null;
+    card._healthComparison = buildMetricComparisonData(store, layer, config, record, populationStore);
     if (record && record.metrics && record.metrics.length) {
       status.textContent = record.note || `Loaded ${record.period || "current"} values.`;
       record.metrics.forEach((metricItem) => {
@@ -1518,6 +1715,171 @@
       return number.toFixed(2);
     }
     return numberFormatter.format(Math.round(number));
+  }
+
+  function openMetricHelp(card, layer, config) {
+    closeMetricHelp();
+
+    const overlay = document.createElement("div");
+    const dialog = document.createElement("section");
+    const header = document.createElement("div");
+    const title = document.createElement("h2");
+    const closeButton = document.createElement("button");
+    const summary = document.createElement("p");
+    const list = document.createElement("div");
+    const record = card._healthRecord;
+    const metrics = record && record.metrics && record.metrics.length ? record.metrics : card._defaultMetrics || [];
+    const comparison = card._healthComparison || {};
+
+    overlay.className = "metric-help-overlay";
+    overlay.dataset.metricHelpOverlay = "true";
+    dialog.className = "metric-help-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "metricHelpTitle");
+    header.className = "metric-help-header";
+    title.id = "metricHelpTitle";
+    title.textContent = layer.label;
+    closeButton.className = "metric-help-close";
+    closeButton.type = "button";
+    closeButton.title = "Close";
+    closeButton.setAttribute("aria-label", "Close metric help");
+    closeButton.innerHTML = '<i data-lucide="x"></i>';
+    closeButton.addEventListener("click", closeMetricHelp);
+    header.append(title, closeButton);
+
+    summary.className = "metric-help-summary";
+    summary.textContent = record
+      ? `IQR values use the 25th to 75th percentile across ${comparison.scopeLabel || "comparable local records"}. Count-style metrics also show population-normalized comparisons when a denominator is available.`
+      : "Local values have not loaded for this geography yet; the descriptions below explain the visible card fields.";
+
+    list.className = "metric-help-list";
+    metrics.forEach((metricItem) => {
+      list.append(createMetricHelpItem(metricItem, comparison.metrics && comparison.metrics[metricItem.label]));
+    });
+
+    dialog.append(header, summary, list);
+    overlay.append(dialog);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        closeMetricHelp();
+      }
+    });
+    document.body.append(overlay);
+    refreshIcons();
+    closeButton.focus();
+  }
+
+  function closeMetricHelp() {
+    document.querySelectorAll("[data-metric-help-overlay='true']").forEach((overlay) => {
+      overlay.remove();
+    });
+  }
+
+  function createMetricHelpItem(metricItem, comparison) {
+    const item = document.createElement("article");
+    const heading = document.createElement("h3");
+    const description = document.createElement("p");
+    const facts = document.createElement("dl");
+
+    item.className = "metric-help-item";
+    heading.textContent = metricItem.label;
+    description.textContent = getMetricExplanation(metricItem.label, metricItem.kind);
+    facts.className = "metric-help-facts";
+    appendHelpFact(facts, "Shown value", metricItem.value || "--");
+    appendHelpFact(facts, "Interquartile range", formatIqr(comparison));
+    if (comparison && comparison.perCapitaRule) {
+      appendHelpFact(facts, "Shown per capita", formatShownPerCapita(metricItem, comparison.perCapitaRule));
+      appendHelpFact(facts, "Per-capita IQR", formatPerCapitaIqr(comparison));
+    }
+    const comparisonCount = getComparisonCount(comparison);
+    if (comparisonCount) {
+      appendHelpFact(facts, "Comparison records", numberFormatter.format(comparisonCount));
+    }
+    item.append(heading, description, facts);
+    return item;
+  }
+
+  function appendHelpFact(container, label, value) {
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value;
+    container.append(term, description);
+  }
+
+  function getMetricExplanation(label, kind) {
+    if (METRIC_EXPLANATIONS[label]) {
+      return METRIC_EXPLANATIONS[label];
+    }
+    if (kind === "percent") {
+      return "A percentage value imported from the source extract.";
+    }
+    if (kind === "decimal") {
+      return "A decimal score or rate imported from the source extract.";
+    }
+    if (kind === "text") {
+      return "A text classification imported from the source extract.";
+    }
+    return "A numeric value imported from the source extract.";
+  }
+
+  function formatIqr(comparison) {
+    const rawComparison = comparison && (comparison.raw || comparison);
+    if (!rawComparison || !Number.isFinite(rawComparison.q1) || !Number.isFinite(rawComparison.q3)) {
+      return "Not available";
+    }
+    return `${formatHealthMetricValue(rawComparison.q1, rawComparison.kind)} to ${formatHealthMetricValue(rawComparison.q3, rawComparison.kind)}`;
+  }
+
+  function formatShownPerCapita(metricItem, rule) {
+    const raw = Number(metricItem.raw);
+    const population =
+      currentSelection &&
+      currentSelection.populationContext &&
+      currentSelection.populationContext.populationSummary &&
+      currentSelection.populationContext.populationSummary.estimate;
+    if (!rule || !Number.isFinite(raw) || !population) {
+      return "Not available";
+    }
+    return formatPerCapitaValue((raw / population) * rule.scale, rule);
+  }
+
+  function formatPerCapitaIqr(comparison) {
+    if (
+      !comparison ||
+      !comparison.perCapitaRule ||
+      !comparison.perCapita ||
+      !Number.isFinite(comparison.perCapita.q1) ||
+      !Number.isFinite(comparison.perCapita.q3)
+    ) {
+      return "Not available";
+    }
+    return `${formatPerCapitaValue(comparison.perCapita.q1, comparison.perCapitaRule)} to ${formatPerCapitaValue(comparison.perCapita.q3, comparison.perCapitaRule)}`;
+  }
+
+  function formatPerCapitaValue(value, rule) {
+    if (!Number.isFinite(value) || !rule) {
+      return "Not available";
+    }
+    if (rule.kind === "currency") {
+      return `${currencyFormatter.format(value)} ${rule.unit}`;
+    }
+    const precision = Math.abs(value) < 10 ? 2 : Math.abs(value) < 100 ? 1 : 0;
+    return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: precision }).format(value)} ${rule.unit}`;
+  }
+
+  function getComparisonCount(comparison) {
+    if (!comparison) {
+      return null;
+    }
+    if (comparison.raw && comparison.raw.count) {
+      return comparison.raw.count;
+    }
+    if (comparison.perCapita && comparison.perCapita.count) {
+      return comparison.perCapita.count;
+    }
+    return comparison.count || null;
   }
 
   function createDashboardPanel(title) {
