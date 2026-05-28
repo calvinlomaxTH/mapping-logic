@@ -974,7 +974,7 @@
     expandedDataButton.setAttribute("aria-expanded", "false");
     const buttonText = expandedDataButton.querySelector("span");
     if (buttonText) {
-      buttonText.textContent = "Expanded data";
+      buttonText.textContent = "Selection details";
     }
     expandedDataDashboard.classList.add("is-hidden");
     expandedDataDashboard.replaceChildren();
@@ -1111,26 +1111,29 @@
     expandedDataButton.setAttribute("aria-expanded", String(dashboardExpanded));
     const buttonText = expandedDataButton.querySelector("span");
     if (buttonText) {
-      buttonText.textContent = dashboardExpanded ? "Hide expanded data" : "Expanded data";
+      buttonText.textContent = dashboardExpanded ? "Hide selection details" : "Selection details";
     }
 
     if (!dashboardExpanded) {
-      dashboardDataToken += 1;
       expandedDataDashboard.classList.add("is-hidden");
       expandedDataDashboard.replaceChildren();
       return;
     }
 
     expandedDataDashboard.classList.remove("is-hidden");
-    renderExpandedDashboard(properties, config, populationContext);
+    renderExpandedDetails(properties, config, populationContext);
   }
 
   function renderDetails(properties, config, populationContext) {
     selectionTitle.textContent = getFeatureName(properties);
     selectionSubtitle.textContent = getFeatureSubtitle(properties, config);
     detailsList.replaceChildren();
+    renderSelectionDashboard(detailsList, properties, config, populationContext);
+    updateExpandedDashboard(properties, config, populationContext);
+  }
 
-    const rows = [
+  function getSelectionDetailRows(properties, config, populationContext) {
+    return [
       ...getPopulationRows(populationContext),
       ["Type", config.singular],
       ["GEOID", properties.GEOID],
@@ -1144,21 +1147,26 @@
       ["Center", formatPoint(properties.INTPTLAT || properties.CENTLAT, properties.INTPTLON || properties.CENTLON)],
       ...getHealthDataRows(config, properties),
     ].filter((row) => hasDisplayValue(row[1]));
+  }
+
+  function renderExpandedDetails(properties, config, populationContext) {
+    expandedDataDashboard.replaceChildren();
+    const list = document.createElement("dl");
+    list.className = "details-list";
+    const rows = getSelectionDetailRows(properties, config, populationContext);
 
     rows.forEach(([label, value]) => {
       const term = document.createElement("dt");
       const description = document.createElement("dd");
       term.textContent = label;
       description.textContent = value;
-      detailsList.append(term, description);
+      list.append(term, description);
     });
 
-    updateExpandedDashboard(properties, config, populationContext);
+    expandedDataDashboard.append(list);
   }
 
-  function renderExpandedDashboard(properties, config, populationContext) {
-    expandedDataDashboard.replaceChildren();
-
+  function renderSelectionDashboard(container, properties, config, populationContext) {
     const summary = populationContext && populationContext.populationSummary;
     const loadingMessage = populationContext && populationContext.populationMessage;
     const dashboardToken = ++dashboardDataToken;
@@ -1177,17 +1185,17 @@
     kpis.forEach(([label, value]) => {
       kpiGrid.append(createDashboardKpi(label, value));
     });
-    expandedDataDashboard.append(kpiGrid);
+    container.append(kpiGrid);
 
     if (summary) {
-      expandedDataDashboard.append(createPopulationTrendPanel(summary));
-      expandedDataDashboard.append(createPopulationDriverPanel(summary));
+      container.append(createPopulationTrendPanel(summary));
+      container.append(createPopulationDriverPanel(summary));
     } else {
-      expandedDataDashboard.append(createDashboardMessage(loadingMessage || "Population data is not available for this selection."));
+      container.append(createDashboardMessage(loadingMessage || "Population data is not available for this selection."));
     }
 
-    expandedDataDashboard.append(createDataLayerDashboard(properties, config));
-    hydrateDataLayerValues(properties, config, dashboardToken);
+    container.append(createDataLayerDashboard(properties, config));
+    hydrateDataLayerValues(properties, config, dashboardToken, container);
   }
 
   function createDashboardKpi(label, value) {
@@ -1347,13 +1355,13 @@
     return metric;
   }
 
-  async function hydrateDataLayerValues(properties, config, dashboardToken) {
+  async function hydrateDataLayerValues(properties, config, dashboardToken, container) {
     let store;
     try {
       store = await getHealthData();
     } catch (error) {
       if (dashboardToken === dashboardDataToken) {
-        setDataLayerCardsMessage("Could not load local health layer values.");
+        setDataLayerCardsMessage("Could not load local health layer values.", container);
       }
       return;
     }
@@ -1364,7 +1372,7 @@
 
     getSelectedApplicableHealthLayers(config.mode).forEach((layer) => {
       const record = getHealthLayerRecord(store, layer, properties, config);
-      updateDataLayerCard(layer.key, record, store.sources && store.sources[layer.key]);
+      updateDataLayerCard(layer.key, record, store.sources && store.sources[layer.key], container);
     });
   }
 
@@ -1455,8 +1463,8 @@
     };
   }
 
-  function updateDataLayerCard(layerKey, record, source) {
-    const card = Array.from(expandedDataDashboard.querySelectorAll(".dashboard-layer-card")).find(
+  function updateDataLayerCard(layerKey, record, source, container) {
+    const card = Array.from(container.querySelectorAll(".dashboard-layer-card")).find(
       (item) => item.dataset.layerKey === layerKey,
     );
     if (!card) {
@@ -1484,8 +1492,8 @@
     status.textContent = statusText;
   }
 
-  function setDataLayerCardsMessage(message) {
-    expandedDataDashboard.querySelectorAll(".dashboard-layer-status").forEach((status) => {
+  function setDataLayerCardsMessage(message, container) {
+    container.querySelectorAll(".dashboard-layer-status").forEach((status) => {
       status.textContent = message;
     });
   }

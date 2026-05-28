@@ -478,6 +478,12 @@ a {
   flex: 1 0 auto;
 }
 
+.selection-content {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .selection-title {
   overflow-wrap: anywhere;
   font-size: 1.05rem;
@@ -497,6 +503,10 @@ a {
   grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
   gap: 9px 12px;
   margin: 16px 0 0;
+}
+
+.expanded-dashboard .details-list {
+  margin-top: 0;
 }
 
 .details-list dt {
