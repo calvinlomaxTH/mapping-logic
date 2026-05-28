@@ -16,7 +16,10 @@
   const dataLayerSummary = document.getElementById("dataLayerSummary");
   const includeMicroInput = document.getElementById("includeMicro");
   const panelToggle = document.getElementById("panelToggle");
+  const basemapControl = document.getElementById("basemapControl");
   const basemapButton = document.getElementById("basemapButton");
+  const basemapMenu = document.getElementById("basemapMenu");
+  const basemapLabel = document.getElementById("basemapLabel");
 
   if (!window.L || !window.L.esri) {
     mapElement.innerHTML =
@@ -28,12 +31,34 @@
   const CURRENT_WMS =
     "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer";
   const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
+  const HEALTH_DATA_PATH = "data/health/health-layer-values.json";
   const CDC_SVI_COUNTY_LAYER_URL =
     "https://onemap.cdc.gov/onemapservices/rest/services/SVI/CDC_ATSDR_Social_Vulnerability_Index_2022_USA/FeatureServer/1";
   const CMS_MEDICARE_ENROLLMENT_API =
     "https://data.cms.gov/data-api/v1/dataset/d7fabe1e-d19b-4333-9eff-e80e0643f2fd/data-viewer";
   const DYNAMIC_LAYER_DPI = 24;
   const SQ_METERS_PER_SQ_MILE = 2589988.110336;
+  const BASEMAPS = {
+    street: {
+      label: "Street",
+      status: "Street basemap active.",
+      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      options: {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors",
+      },
+    },
+    geographic: {
+      label: "Geographic",
+      status: "Geographic basemap active.",
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+      options: {
+        maxZoom: 19,
+        attribution:
+          "Tiles &copy; Esri, Garmin, FAO, NOAA, USGS, EPA, NPS, and the GIS User Community",
+      },
+    },
+  };
   const US_STATE_CODES = [
     "01",
     "02",
@@ -241,8 +266,8 @@
       label: "BRFSS",
       sourceName: "CDC",
       sourceUrl: "https://www.cdc.gov/brfss/annual_data/annual_data.htm",
-      modes: ["states", "metros"],
-      coverage: "State; selected MSA",
+      modes: ["states"],
+      coverage: "State",
       selectionNotes: {
         states: "State annual survey indicators",
         counties: "State survey context; county extract needed",
@@ -346,7 +371,7 @@
       key: "nih-seer-cancer-statistics",
       label: "NIH SEER Cancer Statistics",
       sourceName: "NIH/NCI",
-      sourceUrl: "https://seer.cancer.gov/statistics/",
+      sourceUrl: "https://statecancerprofiles.cancer.gov/incidencerates/",
       modes: ["states", "counties", "metros"],
       coverage: "Registry; state; county",
       selectionNotes: {
@@ -380,6 +405,7 @@
   let dashboardDataToken = 0;
   const msaEstimateCache = new Map();
   let populationDataPromise = null;
+  let healthDataPromise = null;
   const dataLayerValueCache = new Map();
   const selectedHealthLayerKeys = new Set(HEALTH_DATA_LAYERS.map((layer) => layer.key));
 
@@ -392,10 +418,11 @@
     preferCanvas: true,
   });
 
-  const basemapLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors",
-  }).addTo(map);
+  const basemapLayers = Object.fromEntries(
+    Object.entries(BASEMAPS).map(([key, config]) => [key, L.tileLayer(config.url, config.options)]),
+  );
+  let currentBasemapKey = "street";
+  basemapLayers[currentBasemapKey].addTo(map);
 
   map.setMaxBounds(
     L.latLngBounds(
@@ -441,14 +468,28 @@
     document.getElementById("locateButton").addEventListener("click", locateUser);
 
     basemapButton.addEventListener("click", () => {
-      const visible = map.hasLayer(basemapLayer);
-      if (visible) {
-        map.removeLayer(basemapLayer);
-      } else {
-        basemapLayer.addTo(map);
+      setBasemapMenuOpen(basemapMenu.classList.contains("is-hidden"));
+    });
+
+    basemapMenu.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-basemap]");
+      if (!option) {
+        return;
       }
-      basemapButton.setAttribute("aria-pressed", String(!visible));
-      setStatus(!visible ? "Basemap visible." : "Basemap hidden.");
+      setBasemap(option.dataset.basemap);
+      setBasemapMenuOpen(false);
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!basemapControl.contains(event.target)) {
+        setBasemapMenuOpen(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setBasemapMenuOpen(false);
+      }
     });
 
     panelToggle.addEventListener("click", () => {
@@ -478,6 +519,35 @@
     });
 
     map.on("click", handleMapClick);
+  }
+
+  function setBasemapMenuOpen(open) {
+    basemapMenu.classList.toggle("is-hidden", !open);
+    basemapButton.setAttribute("aria-expanded", String(open));
+  }
+
+  function setBasemap(key) {
+    if (!BASEMAPS[key] || key === currentBasemapKey) {
+      return;
+    }
+
+    const previousLayer = basemapLayers[currentBasemapKey];
+    if (previousLayer && map.hasLayer(previousLayer)) {
+      map.removeLayer(previousLayer);
+    }
+
+    currentBasemapKey = key;
+    basemapLayers[currentBasemapKey].addTo(map);
+    basemapLabel.textContent = BASEMAPS[currentBasemapKey].label;
+    basemapButton.title = `Basemap: ${BASEMAPS[currentBasemapKey].label}`;
+
+    basemapMenu.querySelectorAll("[data-basemap]").forEach((option) => {
+      const active = option.dataset.basemap === currentBasemapKey;
+      option.classList.toggle("is-active", active);
+      option.setAttribute("aria-checked", String(active));
+    });
+
+    setStatus(BASEMAPS[currentBasemapKey].status);
   }
 
   function renderDataLayerControls() {
@@ -985,6 +1055,7 @@
     const summary = buildPopulationSummary(records, store, {
       componentCount: records.length,
       sourceNote: "Summed from county estimates",
+      countyIds,
     });
     msaEstimateCache.set(cacheKey, summary);
     return { populationSummary: summary };
@@ -1248,6 +1319,199 @@
     return card;
   }
 
+  function getDataLayerStatus(layer, properties, config) {
+    const matchKey = getDataLayerMatchKey(properties, config);
+    const hasLiveEndpoint = layer.liveModes && layer.liveModes.includes(config.mode);
+    return hasLiveEndpoint
+      ? `Matched to ${matchKey}; source endpoint available.`
+      : `Matched to ${matchKey}; source link ready.`;
+  }
+
+  function getDefaultLayerMetrics(layer, properties, config) {
+    return [
+      { label: "Join", value: getDataLayerMatchKey(properties, config) },
+      { label: "Level", value: config.singular },
+      { label: "Coverage", value: layer.coverage },
+    ];
+  }
+
+  function createLayerMetric(label, value) {
+    const metric = document.createElement("div");
+    const term = document.createElement("span");
+    const detail = document.createElement("strong");
+
+    metric.className = "dashboard-layer-metric";
+    term.textContent = label;
+    detail.textContent = value || "--";
+    metric.append(term, detail);
+    return metric;
+  }
+
+  async function hydrateDataLayerValues(properties, config, dashboardToken) {
+    let store;
+    try {
+      store = await getHealthData();
+    } catch (error) {
+      if (dashboardToken === dashboardDataToken) {
+        setDataLayerCardsMessage("Could not load local health layer values.");
+      }
+      return;
+    }
+
+    if (dashboardToken !== dashboardDataToken || !store) {
+      return;
+    }
+
+    getSelectedApplicableHealthLayers(config.mode).forEach((layer) => {
+      const record = getHealthLayerRecord(store, layer, properties, config);
+      updateDataLayerCard(layer.key, record, store.sources && store.sources[layer.key]);
+    });
+  }
+
+  function getHealthData() {
+    if (!healthDataPromise) {
+      healthDataPromise = fetch(HEALTH_DATA_PATH).then((response) => {
+        if (!response.ok) {
+          throw new Error(`Could not load ${HEALTH_DATA_PATH}`);
+        }
+        return response.json();
+      });
+    }
+    return healthDataPromise;
+  }
+
+  function getHealthLayerRecord(store, layer, properties, config) {
+    if (config.mode === "states") {
+      const stateId = getStateIdForProperties(properties);
+      return (store.states && store.states[stateId] && store.states[stateId][layer.key]) || null;
+    }
+
+    if (config.mode === "counties") {
+      const countyId = getCountyIdForProperties(properties);
+      return (store.counties && store.counties[countyId] && store.counties[countyId][layer.key]) || null;
+    }
+
+    const cbsa = properties.CBSA || properties.GEOID;
+    const directRecord = store.cbsas && store.cbsas[cbsa] && store.cbsas[cbsa][layer.key];
+    if (directRecord) {
+      return directRecord;
+    }
+    return aggregateHealthLayerForMsa(store, layer);
+  }
+
+  function aggregateHealthLayerForMsa(store, layer) {
+    const summary =
+      currentSelection &&
+      currentSelection.populationContext &&
+      currentSelection.populationContext.populationSummary;
+    const countyIds = summary && Array.isArray(summary.countyIds) ? summary.countyIds : [];
+    const records = countyIds
+      .map((countyId) => store.counties && store.counties[countyId] && store.counties[countyId][layer.key])
+      .filter(Boolean);
+
+    if (!records.length) {
+      return null;
+    }
+
+    const metricGroups = new Map();
+    records.forEach((record) => {
+      (record.metrics || []).forEach((metricItem) => {
+        const key = metricItem.label;
+        if (!metricGroups.has(key)) {
+          metricGroups.set(key, {
+            label: metricItem.label,
+            kind: metricItem.kind,
+            aggregate: metricItem.aggregate || "sum",
+            values: [],
+          });
+        }
+        const value = Number(metricItem.raw);
+        if (Number.isFinite(value)) {
+          metricGroups.get(key).values.push(value);
+        }
+      });
+    });
+
+    const metrics = Array.from(metricGroups.values()).filter((group) => group.values.length).map((group) => {
+      const raw =
+        group.aggregate === "average"
+          ? group.values.reduce((total, value) => total + value, 0) / group.values.length
+          : group.values.reduce((total, value) => total + value, 0);
+      return {
+        label: group.label,
+        raw,
+        kind: group.kind,
+        aggregate: group.aggregate,
+        value: formatHealthMetricValue(raw, group.kind),
+      };
+    });
+
+    return {
+      title: layer.label,
+      period: Array.from(new Set(records.map((record) => record.period).filter(Boolean))).join(", "),
+      source: records[0].source,
+      metrics,
+      note: `Aggregated from ${numberFormatter.format(records.length)} counties`,
+    };
+  }
+
+  function updateDataLayerCard(layerKey, record, source) {
+    const card = Array.from(expandedDataDashboard.querySelectorAll(".dashboard-layer-card")).find(
+      (item) => item.dataset.layerKey === layerKey,
+    );
+    if (!card) {
+      return;
+    }
+
+    const status = card.querySelector(".dashboard-layer-status");
+    const metrics = card.querySelector(".dashboard-layer-metrics");
+    if (!status || !metrics) {
+      return;
+    }
+
+    metrics.replaceChildren();
+    if (record && record.metrics && record.metrics.length) {
+      status.textContent = record.note || `Loaded ${record.period || "current"} values.`;
+      record.metrics.forEach((metricItem) => {
+        metrics.append(createLayerMetric(metricItem.label, metricItem.value));
+      });
+      return;
+    }
+
+    const statusText = source && source.status === "source-only"
+      ? source.note || "Source linked; bulk data requires source terms."
+      : "No matching local value for this geography.";
+    status.textContent = statusText;
+  }
+
+  function setDataLayerCardsMessage(message) {
+    expandedDataDashboard.querySelectorAll(".dashboard-layer-status").forEach((status) => {
+      status.textContent = message;
+    });
+  }
+
+  function getStateIdForProperties(properties) {
+    return padCode(properties.STATE || properties.GEOID, 2);
+  }
+
+  function getCountyIdForProperties(properties) {
+    return properties.GEOID || `${padCode(properties.STATE, 2)}${padCode(properties.COUNTY, 3)}`;
+  }
+
+  function formatHealthMetricValue(value, kind) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    if (kind === "percent") {
+      return `${number.toFixed(1)}%`;
+    }
+    if (kind === "decimal") {
+      return number.toFixed(2);
+    }
+    return numberFormatter.format(Math.round(number));
+  }
+
   function createDashboardPanel(title) {
     const panel = document.createElement("section");
     const heading = document.createElement("h3");
@@ -1493,6 +1757,7 @@
       domesticMigration: sumRecords(records, `DOMESTICMIG${latestYear}`),
       internationalMigration: sumRecords(records, `INTERNATIONALMIG${latestYear}`),
       componentCount: options && options.componentCount,
+      countyIds: options && options.countyIds,
       sourceNote: options && options.sourceNote,
       sourcePath: store.sourcePath,
     };

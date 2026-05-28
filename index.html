@@ -4,10 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ODIN Map Viewer</title>
-    <link rel="icon" type="image/png" href="./assets/third-horizon-logo-white.png" />
-    <link rel="apple-touch-icon" href="./assets/third-horizon-logo-white.png" />
+    <link rel="icon" type="image/png" href="./assets/third-horizon-favicon.png" />
+    <link rel="apple-touch-icon" href="./assets/third-horizon-favicon.png" />
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link rel="preconnect" href="https://server.arcgisonline.com" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -123,7 +124,7 @@
 
         <footer class="source-note">
           Data: <a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_restmapservice.html" target="_blank" rel="noreferrer">U.S. Census TIGERweb</a>.
-          Basemap: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>.
+          Basemaps: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> and <a href="https://www.esri.com/en-us/legal/terms/full-master-agreement" target="_blank" rel="noreferrer">Esri</a>.
         </footer>
       </aside>
 
@@ -147,10 +148,27 @@
           <button class="icon-button" id="locateButton" type="button" title="Locate me" aria-label="Locate me">
             <i data-lucide="crosshair"></i>
           </button>
-          <button class="toolbar-button" id="basemapButton" type="button" aria-pressed="true" title="Toggle basemap">
-            <i data-lucide="map-pinned"></i>
-            <span>Base</span>
-          </button>
+          <div class="basemap-control" id="basemapControl">
+            <button
+              class="toolbar-button"
+              id="basemapButton"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded="false"
+              title="Choose basemap"
+            >
+              <i data-lucide="map-pinned"></i>
+              <span id="basemapLabel">Street</span>
+            </button>
+            <div class="basemap-menu is-hidden" id="basemapMenu" role="menu" aria-label="Basemap">
+              <button class="basemap-option is-active" type="button" data-basemap="street" role="menuitemradio" aria-checked="true">
+                Street
+              </button>
+              <button class="basemap-option" type="button" data-basemap="geographic" role="menuitemradio" aria-checked="false">
+                Geographic
+              </button>
+            </div>
+          </div>
         </div>
 
         <div class="legend" id="legend" aria-live="polite"></div>
