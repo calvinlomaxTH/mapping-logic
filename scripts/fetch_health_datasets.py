@@ -147,6 +147,32 @@ def add(target, scope, geoid, layer, title, metrics, period="", source=""):
     bucket[layer] = {"title": title, "period": period, "source": source or SOURCES.get(layer, ""), "metrics": metrics}
 
 
+def attach_history(target, scope, geoid, layer, period, metrics):
+    metrics = clean_metrics(metrics)
+    record = target[scope].get(str(geoid), {}).get(layer)
+    if not record or not period or not metrics:
+        return
+    history = record.setdefault("history", {})
+    for item in metrics:
+        if item.get("kind") == "text" or item.get("raw") is None:
+            continue
+        history.setdefault(item["label"], []).append({
+            "period": str(period),
+            "raw": item["raw"],
+            "value": item["value"],
+            "kind": item["kind"],
+        })
+
+
+def add_series(target, scope, geoid, layer, title, period_metrics, source=""):
+    if not period_metrics:
+        return
+    latest_period = sorted(period_metrics.keys())[-1]
+    add(target, scope, geoid, layer, title, period_metrics[latest_period], str(latest_period), source)
+    for period in sorted(period_metrics.keys())[-5:]:
+        attach_history(target, scope, geoid, layer, period, period_metrics[period])
+
+
 def build_geo_indexes():
     by_county_name = {}
     state_names = {}
@@ -195,10 +221,11 @@ def date_key(value):
 
 
 def ingest_brfss(data):
+    years = [str(year) for year in range(2020, 2025)]
     params = {
         "$limit": "50000",
-        "$select": "locationabbr,locationdesc,questionid,question,response,data_value,data_value_unit",
-        "$where": "year='2024' AND break_out='Overall' AND response='Yes'",
+        "$select": "year,locationabbr,locationdesc,questionid,question,response,data_value,data_value_unit",
+        "$where": f"year in({','.join(repr(year) for year in years)}) AND break_out='Overall' AND response='Yes'",
     }
     wanted = {
         "ADDEPEV3": "Depression",
@@ -208,18 +235,23 @@ def ingest_brfss(data):
         "HLTHPLN1": "Health coverage",
     }
     rows = fetch_json(SOURCES["brfss"], params)
-    grouped = defaultdict(lambda: defaultdict(list))
+    grouped = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for row in rows:
         state = ABBR_STATE.get(str(row.get("locationabbr", "")).upper())
+        year = str(row.get("year", "")).strip()
         label = wanted.get(row.get("questionid"))
         value = number(row.get("data_value"))
-        if state and label and value is not None:
-            grouped[state][label].append(value)
-    for state, labels in grouped.items():
-        add(data, "states", state, "brfss", "BRFSS", [
-            metric(label, average(values), "percent", "average")
-            for label, values in labels.items()
-        ], "2024")
+        if state and year and label and value is not None:
+            grouped[state][year][label].append(value)
+    for state, years_by_label in grouped.items():
+        period_metrics = {
+            year: [
+                metric(label, average(values), "percent", "average")
+                for label, values in labels.items()
+            ]
+            for year, labels in years_by_label.items()
+        }
+        add_series(data, "states", state, "brfss", "BRFSS", period_metrics)
 
 
 def ingest_care_compare(data, county_index):
@@ -289,48 +321,60 @@ def ingest_hrsa(data, county_index):
 
 
 def ingest_sahie(data):
-    raw = urllib.request.urlopen(SOURCES["sahie"], timeout=120).read()
-    archive = zipfile.ZipFile(io.BytesIO(raw))
-    lines = io.TextIOWrapper(archive.open(archive.namelist()[0]), encoding="latin1").read().splitlines()
-    header_index = next(index for index, line in enumerate(lines) if line.startswith("year,version,"))
-    reader = csv.DictReader(lines[header_index:])
-    for row in reader:
-        if row.get("agecat") != "0" or row.get("racecat") != "0" or row.get("sexcat") != "0" or row.get("iprcat") != "0":
+    grouped = defaultdict(dict)
+    for year in range(2019, 2024):
+        url = SOURCES["sahie"].replace("sahie-2023-csv.zip", f"sahie-{year}-csv.zip")
+        try:
+            raw = urllib.request.urlopen(url, timeout=120).read()
+        except Exception:
             continue
-        state = str(row.get("statefips", "")).zfill(2)
-        county = str(row.get("countyfips", "")).zfill(3)
-        scope = "states" if row.get("geocat") == "40" else "counties"
-        geoid = state if scope == "states" else f"{state}{county}"
-        add(data, scope, geoid, "sahie", "SAHIE", [
-            metric("Uninsured", number(row.get("NUI"))),
-            metric("Insured", number(row.get("NIC"))),
-            metric("Uninsured rate", number(row.get("PCTUI")), "percent", "average"),
-            metric("Insured rate", number(row.get("PCTIC")), "percent", "average"),
-        ], "2023")
+        archive = zipfile.ZipFile(io.BytesIO(raw))
+        lines = io.TextIOWrapper(archive.open(archive.namelist()[0]), encoding="latin1").read().splitlines()
+        header_index = next(index for index, line in enumerate(lines) if line.startswith("year,version,"))
+        reader = csv.DictReader(lines[header_index:])
+        for row in reader:
+            if row.get("agecat") != "0" or row.get("racecat") != "0" or row.get("sexcat") != "0" or row.get("iprcat") != "0":
+                continue
+            state = str(row.get("statefips", "")).zfill(2)
+            county = str(row.get("countyfips", "")).zfill(3)
+            scope = "states" if row.get("geocat") == "40" else "counties"
+            geoid = state if scope == "states" else f"{state}{county}"
+            grouped[(scope, geoid)][year] = [
+                metric("Uninsured", number(row.get("NUI"))),
+                metric("Insured", number(row.get("NIC"))),
+                metric("Uninsured rate", number(row.get("PCTUI")), "percent", "average"),
+                metric("Insured rate", number(row.get("PCTIC")), "percent", "average"),
+            ]
+    for (scope, geoid), period_metrics in grouped.items():
+        add_series(data, scope, geoid, "sahie", "SAHIE", period_metrics, SOURCES["sahie"])
 
 
 def ingest_medicare(data):
-    rows = fetch_json(SOURCES["cms-medicare-enrollment"], {
-        "size": "10000",
-        "filter[YEAR]": "2025",
-        "filter[MONTH]": "Year",
-    }, timeout=120)
-    for row in rows:
-        level = row.get("BENE_GEO_LVL")
-        fips = digits(row.get("BENE_FIPS_CD", ""))
-        if level == "State" and 1 <= len(fips) <= 2:
-            scope, geoid = "states", fips.zfill(2)
-        elif level == "County" and len(fips) >= 4:
-            scope, geoid = "counties", fips.zfill(5)[-5:]
-        else:
-            continue
-        total = number(row.get("TOT_BENES"))
-        ma = number(row.get("MA_AND_OTH_BENES"))
-        add(data, scope, geoid, "cms-medicare-enrollment", "CMS Medicare Enrollment", [
-            metric("Beneficiaries", total),
-            metric("Medicare Advantage", ma),
-            metric("MA share", (ma / total * 100) if total and ma is not None else None, "percent", "average"),
-        ], "2025")
+    grouped = defaultdict(dict)
+    for year in range(2021, 2026):
+        rows = fetch_json(SOURCES["cms-medicare-enrollment"], {
+            "size": "10000",
+            "filter[YEAR]": str(year),
+            "filter[MONTH]": "Year",
+        }, timeout=120)
+        for row in rows:
+            level = row.get("BENE_GEO_LVL")
+            fips = digits(row.get("BENE_FIPS_CD", ""))
+            if level == "State" and 1 <= len(fips) <= 2:
+                scope, geoid = "states", fips.zfill(2)
+            elif level == "County" and len(fips) >= 4:
+                scope, geoid = "counties", fips.zfill(5)[-5:]
+            else:
+                continue
+            total = number(row.get("TOT_BENES"))
+            ma = number(row.get("MA_AND_OTH_BENES"))
+            grouped[(scope, geoid)][year] = [
+                metric("Beneficiaries", total),
+                metric("Medicare Advantage", ma),
+                metric("MA share", (ma / total * 100) if total and ma is not None else None, "percent", "average"),
+            ]
+    for (scope, geoid), period_metrics in grouped.items():
+        add_series(data, scope, geoid, "cms-medicare-enrollment", "CMS Medicare Enrollment", period_metrics)
 
 
 def ingest_medicaid(data, state_names):
@@ -345,19 +389,33 @@ def ingest_medicaid(data, state_names):
             break
         offset += 5000
     latest = {}
+    yearly = {}
     for row in rows:
         state = state_names.get(str(row.get("state", "")).strip().upper())
         program = str(row.get("programtype", "")).strip()
         month = int(digits(row.get("month")) or 0)
+        year = month // 100 if month >= 10000 else None
         if state and program:
             key = (state, program)
             if key not in latest or month > latest[key]["month"]:
                 latest[key] = {"month": month, "value": number(row.get("countenrolled"))}
+            if year:
+                yearly_key = (state, program, year)
+                if yearly_key not in yearly or month > yearly[yearly_key]["month"]:
+                    yearly[yearly_key] = {"month": month, "value": number(row.get("countenrolled"))}
     by_state = defaultdict(list)
     for (state, program), item in latest.items():
         by_state[state].append(metric(program, item["value"]))
     for state, metrics in by_state.items():
         add(data, "states", state, "medicaid-enrollment", "Medicaid Enrollment", metrics, "latest")
+    by_state_year = defaultdict(lambda: defaultdict(list))
+    for (state, program, year), item in yearly.items():
+        by_state_year[state][year].append(metric(program, item["value"]))
+    for state, period_metrics in by_state_year.items():
+        latest_record = data["states"].get(state, {}).get("medicaid-enrollment")
+        if latest_record:
+            for year in sorted(period_metrics.keys())[-5:]:
+                attach_history(data, "states", state, "medicaid-enrollment", year, period_metrics[year])
 
 
 def ingest_svi(data):
@@ -405,6 +463,7 @@ def ingest_svi(data):
 def ingest_hospital_cost_reports(data, county_index):
     rows = fetch_api_rows(SOURCES["cms-hospital-cost-reports"], {"sort": "-Fiscal Year End Date"}, timeout=120)
     latest_by_provider = {}
+    latest_by_provider_year = {}
     for row in rows:
         provider_id = str(row_value(row, "Provider CCN", "CMS Certification Number (CCN)", "Provider Number", "Provider ID")).strip()
         report_id = str(row_value(row, "Report Record Number", "RPT_REC_NUM", "Report ID")).strip()
@@ -414,9 +473,12 @@ def ingest_hospital_cost_reports(data, county_index):
         current_date = date_key(row_value(row, "Fiscal Year End Date"))
         if key not in latest_by_provider or current_date > latest_by_provider[key]["date"]:
             latest_by_provider[key] = {"date": current_date, "row": row}
+        if current_date:
+            year_key = (key, current_date[0])
+            if year_key not in latest_by_provider_year or current_date > latest_by_provider_year[year_key]["date"]:
+                latest_by_provider_year[year_key] = {"date": current_date, "row": row}
 
-    grouped = defaultdict(lambda: {"count": 0, "beds": [], "costs": [], "revenue": []})
-    for row in (item["row"] for item in latest_by_provider.values()):
+    def scope_ids(row):
         abbr = str(row_value(row, "State Code", "Provider State", "State")).upper().strip()
         state = ABBR_STATE.get(abbr)
         county_text = row_value(row, "County FIPS", "Provider County FIPS", "County Code", "County")
@@ -429,7 +491,13 @@ def ingest_hospital_cost_reports(data, county_index):
             county = county_index.get((abbr, clean_name(row_value(row, "County", "Provider County", "County Name"))))
         cbsa = fips_from_value(row_value(row, "Medicare CBSA Number", "CBSA Number", "CBSA"), 5)
         cbsa = cbsa if cbsa and cbsa != "00000" and cbsa != "99999" else ""
-        for scope, geoid in (("states", state), ("counties", county), ("cbsas", cbsa)):
+        return (("states", state), ("counties", county), ("cbsas", cbsa))
+
+    def new_group():
+        return {"count": 0, "beds": [], "costs": [], "revenue": []}
+
+    def add_report(grouped, row):
+        for scope, geoid in scope_ids(row):
             if geoid:
                 grouped[(scope, geoid)]["count"] += 1
                 for key, field in (
@@ -440,13 +508,29 @@ def ingest_hospital_cost_reports(data, county_index):
                     value = number(row_value(row, field))
                     if value is not None and value >= 0:
                         grouped[(scope, geoid)][key].append(value)
-    for (scope, geoid), values in grouped.items():
-        add(data, scope, geoid, "cms-hospital-cost-reports", "CMS Hospital Cost Reports", [
+
+    def metrics_for(values):
+        return [
             metric("Latest provider reports", values["count"]),
             metric("Beds", sum_or_none(values["beds"])),
             metric("Total costs", sum_or_none(values["costs"])),
             metric("Net patient revenue", sum_or_none(values["revenue"])),
-        ], "latest report per provider")
+        ]
+
+    grouped = defaultdict(new_group)
+    for row in (item["row"] for item in latest_by_provider.values()):
+        add_report(grouped, row)
+    for (scope, geoid), values in grouped.items():
+        add(data, scope, geoid, "cms-hospital-cost-reports", "CMS Hospital Cost Reports", metrics_for(values), "latest report per provider")
+
+    all_years = sorted({year for (_, year) in latest_by_provider_year.keys()})[-5:]
+    yearly_grouped = {year: defaultdict(new_group) for year in all_years}
+    for (_, year), item in latest_by_provider_year.items():
+        if year in yearly_grouped:
+            add_report(yearly_grouped[year], item["row"])
+    for year in all_years:
+        for (scope, geoid), values in yearly_grouped[year].items():
+            attach_history(data, scope, geoid, "cms-hospital-cost-reports", year, metrics_for(values))
 
 
 def ingest_seer_cancer(data):
@@ -501,20 +585,28 @@ def ingest_seer_cancer(data):
 
 def ingest_fluvaxview(data):
     rows = fetch_json(SOURCES["cdc-fluvaxview"], {
-        "$limit": "10000",
+        "$limit": "50000",
         "$select": "geography_name,curr_season,curr_estimate,current_season_week_ending",
         "$where": "geographic_level='State' AND comparison_type='Overall'",
         "$order": "current_season_week_ending DESC",
     }, timeout=120)
-    seen = set()
+    latest_by_state_season = {}
     for row in rows:
         state_name = str(row.get("geography_name", "")).strip().upper()
         state = STATE_NAMES.get(state_name)
-        if state and state not in seen:
-            seen.add(state)
-            add(data, "states", state, "cdc-fluvaxview", "CDC FluVaxView", [
-                metric("Flu vaccine coverage", number(row.get("curr_estimate")), "percent", "average"),
-            ], row.get("curr_season", "latest"))
+        season = str(row.get("curr_season") or "").strip()
+        week = str(row.get("current_season_week_ending") or "").strip()
+        if state and season:
+            key = (state, season)
+            if key not in latest_by_state_season or week > latest_by_state_season[key]["week"]:
+                latest_by_state_season[key] = {"week": week, "value": number(row.get("curr_estimate"))}
+    by_state = defaultdict(dict)
+    for (state, season), item in latest_by_state_season.items():
+        by_state[state][season] = [
+            metric("Flu vaccine coverage", item["value"], "percent", "average"),
+        ]
+    for state, period_metrics in by_state.items():
+        add_series(data, "states", state, "cdc-fluvaxview", "CDC FluVaxView", period_metrics)
 
 
 STATE_NAMES = {}

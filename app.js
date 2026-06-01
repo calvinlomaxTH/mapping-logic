@@ -32,6 +32,7 @@
     "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer";
   const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
   const HEALTH_DATA_PATH = "data/health/health-layer-values.json";
+  const SVG_NS = "http://www.w3.org/2000/svg";
   const CDC_SVI_COUNTY_LAYER_URL =
     "https://onemap.cdc.gov/onemapservices/rest/services/SVI/CDC_ATSDR_Social_Vulnerability_Index_2022_USA/FeatureServer/1";
   const CMS_MEDICARE_ENROLLMENT_API =
@@ -1404,7 +1405,7 @@
     const metrics = document.createElement("div");
     const footer = document.createElement("div");
     const link = document.createElement("a");
-    const helpButton = document.createElement("button");
+    const expandButton = document.createElement("button");
 
     card.className = "dashboard-layer-card";
     card.dataset.layerKey = layer.key;
@@ -1425,13 +1426,13 @@
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = "Source";
-    helpButton.className = "metric-help-button";
-    helpButton.type = "button";
-    helpButton.title = `Explain ${layer.label} metrics`;
-    helpButton.setAttribute("aria-label", `Explain ${layer.label} metrics`);
-    helpButton.innerHTML = '<i data-lucide="circle-help"></i>';
-    helpButton.addEventListener("click", () => openMetricHelp(card, layer, config));
-    footer.append(link, helpButton);
+    expandButton.className = "metric-expand-button";
+    expandButton.type = "button";
+    expandButton.title = `Expand ${layer.label} metrics`;
+    expandButton.setAttribute("aria-label", `Expand ${layer.label} metrics`);
+    expandButton.innerHTML = '<i data-lucide="maximize-2"></i><span>Expand</span>';
+    expandButton.addEventListener("click", () => openMetricHelp(card, layer, config));
+    footer.append(link, expandButton);
     card.append(header, match, status, metrics, footer);
     return card;
   }
@@ -1485,7 +1486,7 @@
     }
     getSelectedApplicableHealthLayers(config.mode).forEach((layer) => {
       const record = getHealthLayerRecord(store, layer, properties, config, populationStore);
-      updateDataLayerCard(layer, record, store.sources && store.sources[layer.key], container, store, config, populationStore);
+      updateDataLayerCard(layer, record, store.sources && store.sources[layer.key], container, store, config, populationStore, properties);
     });
   }
 
@@ -1585,11 +1586,19 @@
       metrics,
       note: `Aggregated from ${numberFormatter.format(records.length)} counties`,
       comparisonLabel: "selected MSA component counties",
-      metricComparisons: buildIqrByMetric(recordEntries, "counties", populationStore),
+      metricComparisons: buildIqrByMetric(
+        recordEntries,
+        "counties",
+        populationStore,
+        { metrics },
+        null,
+        summary && summary.estimate,
+      ),
+      history: buildAggregatedMetricHistory(recordEntries, populationStore),
     };
   }
 
-  function buildMetricComparisonData(store, layer, config, record, populationStore) {
+  function buildMetricComparisonData(store, layer, config, record, populationStore, properties) {
     if (record && record.metricComparisons) {
       return {
         scopeLabel: record.comparisonLabel || "matched component records",
@@ -1604,8 +1613,24 @@
 
     return {
       scopeLabel: scope.label,
-      metrics: buildIqrByMetric(recordEntries, scope.key, populationStore),
+      metrics: buildIqrByMetric(
+        recordEntries,
+        scope.key,
+        populationStore,
+        record,
+        getSelectedComparisonGeoid(properties, config),
+        getSelectedPopulationEstimate(),
+      ),
     };
+  }
+
+  function getSelectedPopulationEstimate() {
+    return (
+      currentSelection &&
+      currentSelection.populationContext &&
+      currentSelection.populationContext.populationSummary &&
+      currentSelection.populationContext.populationSummary.estimate
+    );
   }
 
   function shouldPopulationWeightMetric(metricItem) {
@@ -1648,6 +1673,111 @@
     metricItem.value = formatHealthMetricValue(raw, metricItem.kind);
   }
 
+  function buildAggregatedMetricHistory(recordEntries, populationStore) {
+    const periodGroups = new Map();
+    recordEntries.forEach(([countyId, record]) => {
+      Object.entries(record.history || {}).forEach(([label, points]) => {
+        points.forEach((point) => {
+          const period = String(point.period);
+          if (!periodGroups.has(period)) {
+            periodGroups.set(period, []);
+          }
+          let periodRecord = periodGroups.get(period).find((item) => item.countyId === countyId);
+          if (!periodRecord) {
+            periodRecord = { countyId, metrics: [] };
+            periodGroups.get(period).push(periodRecord);
+          }
+          periodRecord.metrics.push({
+            label,
+            raw: point.raw,
+            kind: point.kind,
+            aggregate: getMetricAggregate(record, label),
+            value: point.value,
+          });
+        });
+      });
+    });
+
+    const history = {};
+    Array.from(periodGroups.entries()).sort(([a], [b]) => String(a).localeCompare(String(b))).forEach(([period, periodEntries]) => {
+      const syntheticRecord = aggregateHistoryPeriod(periodEntries, populationStore);
+      syntheticRecord.metrics.forEach((metricItem) => {
+        history[metricItem.label] = history[metricItem.label] || [];
+        history[metricItem.label].push({
+          period,
+          raw: metricItem.raw,
+          value: metricItem.value,
+          kind: metricItem.kind,
+        });
+      });
+    });
+    return history;
+  }
+
+  function getMetricAggregate(record, label) {
+    const metricItem = (record.metrics || []).find((item) => item.label === label);
+    return (metricItem && metricItem.aggregate) || "sum";
+  }
+
+  function aggregateHistoryPeriod(periodEntries, populationStore) {
+    const metricGroups = new Map();
+    periodEntries.forEach(({ countyId, metrics }) => {
+      const population = getComparisonPopulation("counties", countyId, populationStore);
+      metrics.forEach((metricItem) => {
+        if (!metricGroups.has(metricItem.label)) {
+          metricGroups.set(metricItem.label, {
+            label: metricItem.label,
+            kind: metricItem.kind,
+            aggregate: metricItem.aggregate || "sum",
+            values: [],
+            weightedTotal: 0,
+            weightTotal: 0,
+          });
+        }
+        const value = Number(metricItem.raw);
+        if (!Number.isFinite(value)) {
+          return;
+        }
+        const group = metricGroups.get(metricItem.label);
+        group.values.push(value);
+        if (population && shouldPopulationWeightMetric(metricItem)) {
+          group.weightedTotal += value * population;
+          group.weightTotal += population;
+        }
+      });
+    });
+    const metrics = Array.from(metricGroups.values()).filter((group) => group.values.length).map((group) => {
+      const raw =
+        group.aggregate === "average"
+          ? group.weightTotal
+            ? group.weightedTotal / group.weightTotal
+            : group.values.reduce((total, value) => total + value, 0) / group.values.length
+          : group.values.reduce((total, value) => total + value, 0);
+      return {
+        label: group.label,
+        raw,
+        kind: group.kind,
+        aggregate: group.aggregate,
+        value: formatHealthMetricValue(raw, group.kind),
+      };
+    });
+    applyDerivedAggregateMetrics(metrics);
+    return { metrics };
+  }
+
+  function getSelectedComparisonGeoid(properties, config) {
+    if (!properties) {
+      return null;
+    }
+    if (config.mode === "states") {
+      return getStateIdForProperties(properties);
+    }
+    if (config.mode === "counties") {
+      return getCountyIdForProperties(properties);
+    }
+    return properties.CBSA || properties.GEOID || null;
+  }
+
   function getComparisonScope(config) {
     if (config.mode === "states") {
       return { key: "states", label: "state records" };
@@ -1658,8 +1788,13 @@
     return { key: "cbsas", label: "CBSA records" };
   }
 
-  function buildIqrByMetric(recordEntries, scopeKey, populationStore) {
+  function buildIqrByMetric(recordEntries, scopeKey, populationStore, selectedRecord, selectedGeoid, selectedPopulation) {
     const groups = new Map();
+    const selectedMetricValues = new Map(
+      ((selectedRecord && selectedRecord.metrics) || [])
+        .filter((metricItem) => Number.isFinite(Number(metricItem.raw)))
+        .map((metricItem) => [metricItem.label, Number(metricItem.raw)]),
+    );
     recordEntries.forEach(([geoid, record]) => {
       (record.metrics || []).forEach((metricItem) => {
         const value = Number(metricItem.raw);
@@ -1687,15 +1822,23 @@
       Array.from(groups.entries()).map(([label, group]) => [
         label,
         {
-          raw: buildIqrSummary(group.values, group.kind),
-          perCapita: buildIqrSummary(group.perCapitaValues, group.perCapitaRule && group.perCapitaRule.kind),
+          raw: buildIqrSummary(group.values, group.kind, selectedMetricValues.get(label)),
+          perCapita: buildIqrSummary(
+            group.perCapitaValues,
+            group.perCapitaRule && group.perCapitaRule.kind,
+            getSelectedPerCapitaValue(
+              selectedMetricValues.get(label),
+              group.perCapitaRule,
+              selectedPopulation || getComparisonPopulation(scopeKey, selectedGeoid, populationStore),
+            ),
+          ),
           perCapitaRule: group.perCapitaRule,
         },
       ]),
     );
   }
 
-  function buildIqrSummary(values, kind) {
+  function buildIqrSummary(values, kind, selectedValue) {
     const sorted = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
     if (!sorted.length) {
       return null;
@@ -1706,7 +1849,15 @@
       q3: quantile(sorted, 0.75),
       count: sorted.length,
       kind,
+      percentile: percentileRank(sorted, selectedValue),
     };
+  }
+
+  function getSelectedPerCapitaValue(raw, rule, population) {
+    if (!rule || !Number.isFinite(raw) || !population) {
+      return null;
+    }
+    return (raw / population) * rule.scale;
   }
 
   function getPerCapitaRule(metricItem) {
@@ -1744,7 +1895,24 @@
     return sortedValues[lowerIndex] * (1 - weight) + sortedValues[upperIndex] * weight;
   }
 
-  function updateDataLayerCard(layer, record, source, container, store, config, populationStore) {
+  function percentileRank(sortedValues, value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || !sortedValues.length) {
+      return null;
+    }
+    let below = 0;
+    let equal = 0;
+    sortedValues.forEach((item) => {
+      if (item < number) {
+        below += 1;
+      } else if (item === number) {
+        equal += 1;
+      }
+    });
+    return ((below + equal * 0.5) / sortedValues.length) * 100;
+  }
+
+  function updateDataLayerCard(layer, record, source, container, store, config, populationStore, properties) {
     const card = Array.from(container.querySelectorAll(".dashboard-layer-card")).find(
       (item) => item.dataset.layerKey === layer.key,
     );
@@ -1760,7 +1928,7 @@
 
     metrics.replaceChildren();
     card._healthRecord = record || null;
-    card._healthComparison = buildMetricComparisonData(store, layer, config, record, populationStore);
+    card._healthComparison = buildMetricComparisonData(store, layer, config, record, populationStore, properties);
     if (record && record.metrics && record.metrics.length) {
       status.textContent = record.note || `Loaded ${record.period || "current"} values.`;
       record.metrics.forEach((metricItem) => {
@@ -1816,6 +1984,7 @@
     const record = card._healthRecord;
     const metrics = record && record.metrics && record.metrics.length ? record.metrics : card._defaultMetrics || [];
     const comparison = card._healthComparison || {};
+    const history = (record && record.history) || {};
 
     overlay.className = "metric-help-overlay";
     overlay.dataset.metricHelpOverlay = "true";
@@ -1829,19 +1998,23 @@
     closeButton.className = "metric-help-close";
     closeButton.type = "button";
     closeButton.title = "Close";
-    closeButton.setAttribute("aria-label", "Close metric help");
+    closeButton.setAttribute("aria-label", "Close expanded metrics");
     closeButton.innerHTML = '<i data-lucide="x"></i>';
     closeButton.addEventListener("click", closeMetricHelp);
     header.append(title, closeButton);
 
     summary.className = "metric-help-summary";
     summary.textContent = record
-      ? `IQR values use the 25th to 75th percentile across ${comparison.scopeLabel || "comparable local records"}. Count-style metrics also show population-normalized comparisons when a denominator is available.`
+      ? `IQR and percentile values compare this selection with ${comparison.scopeLabel || "comparable local records"}. Five-year trend charts appear when the local extract has comparable prior periods.`
       : "Local values have not loaded for this geography yet; the descriptions below explain the visible card fields.";
 
     list.className = "metric-help-list";
     metrics.forEach((metricItem) => {
-      list.append(createMetricHelpItem(metricItem, comparison.metrics && comparison.metrics[metricItem.label]));
+      list.append(createMetricHelpItem(
+        metricItem,
+        comparison.metrics && comparison.metrics[metricItem.label],
+        history[metricItem.label],
+      ));
     });
 
     dialog.append(header, summary, list);
@@ -1862,11 +2035,12 @@
     });
   }
 
-  function createMetricHelpItem(metricItem, comparison) {
+  function createMetricHelpItem(metricItem, comparison, historyPoints) {
     const item = document.createElement("article");
     const heading = document.createElement("h3");
     const description = document.createElement("p");
     const facts = document.createElement("dl");
+    const historyChart = createMetricHistoryChart(metricItem, historyPoints);
 
     item.className = "metric-help-item";
     heading.textContent = metricItem.label;
@@ -1874,16 +2048,229 @@
     facts.className = "metric-help-facts";
     appendHelpFact(facts, "Shown value", metricItem.value || "--");
     appendHelpFact(facts, "Interquartile range", formatIqr(comparison));
+    if (comparison && comparison.raw && Number.isFinite(comparison.raw.percentile)) {
+      appendHelpFact(facts, "Raw percentile", formatPercentile(comparison.raw.percentile));
+    }
     if (comparison && comparison.perCapitaRule) {
       appendHelpFact(facts, "Shown per capita", formatShownPerCapita(metricItem, comparison.perCapitaRule));
       appendHelpFact(facts, "Per-capita IQR", formatPerCapitaIqr(comparison));
+      if (comparison.perCapita && Number.isFinite(comparison.perCapita.percentile)) {
+        appendHelpFact(facts, "Per-capita percentile", formatPercentile(comparison.perCapita.percentile));
+      }
     }
     const comparisonCount = getComparisonCount(comparison);
     if (comparisonCount) {
       appendHelpFact(facts, "Comparison records", numberFormatter.format(comparisonCount));
     }
     item.append(heading, description, facts);
+    if (historyChart) {
+      item.append(historyChart);
+    }
     return item;
+  }
+
+  function createMetricHistoryChart(metricItem, historyPoints) {
+    const points = normalizeMetricHistory(historyPoints);
+    if (points.length < 2) {
+      return null;
+    }
+
+    const section = document.createElement("div");
+    const header = document.createElement("div");
+    const title = document.createElement("span");
+    const caption = document.createElement("strong");
+    const chart = createMetricHistorySvg(points, metricItem.kind);
+
+    section.className = "metric-history";
+    header.className = "metric-history-header";
+    title.textContent = "Five-year change";
+    caption.textContent = formatHistoryChange(points, metricItem.kind);
+    header.append(title, caption);
+    section.append(header, chart);
+    return section;
+  }
+
+  function normalizeMetricHistory(historyPoints) {
+    return (Array.isArray(historyPoints) ? historyPoints : [])
+      .map((point) => ({
+        period: String(point.period || "").trim(),
+        raw: Number(point.raw),
+        kind: point.kind,
+      }))
+      .filter((point) => point.period && Number.isFinite(point.raw))
+      .sort((a, b) => getHistorySortValue(a.period) - getHistorySortValue(b.period))
+      .slice(-5);
+  }
+
+  function getHistorySortValue(period) {
+    const text = String(period || "");
+    const yearMatch = text.match(/\d{4}/);
+    if (yearMatch) {
+      return Number(yearMatch[0]);
+    }
+    const number = Number(text.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function createMetricHistorySvg(points, kind) {
+    const width = 360;
+    const height = 138;
+    const margin = { top: 12, right: 12, bottom: 26, left: 46 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const values = points.map((point) => point.raw);
+    let min = Math.min(...values);
+    let max = Math.max(...values);
+
+    if (min === max) {
+      const spread = Math.max(Math.abs(max) * 0.08, kind === "percent" ? 1 : 1);
+      min -= spread;
+      max += spread;
+    } else if (min < 0 && max > 0) {
+      min = Math.min(min, 0);
+      max = Math.max(max, 0);
+    }
+
+    const range = max - min || 1;
+    const xFor = (index) => margin.left + (points.length === 1 ? plotWidth / 2 : (plotWidth * index) / (points.length - 1));
+    const yFor = (value) => margin.top + ((max - value) / range) * plotHeight;
+    const svg = svgElement("svg", {
+      class: "metric-history-chart",
+      viewBox: `0 0 ${width} ${height}`,
+      role: "img",
+      "aria-label": `Five-year ${points[0].period} to ${points[points.length - 1].period} trend`,
+    });
+    const yTicks = [max, min + range / 2, min];
+
+    yTicks.forEach((value) => {
+      const y = yFor(value);
+      svg.append(svgElement("line", {
+        class: "metric-history-grid",
+        x1: margin.left,
+        x2: width - margin.right,
+        y1: y,
+        y2: y,
+      }));
+      const label = svgElement("text", {
+        class: "metric-history-y-label",
+        x: margin.left - 8,
+        y: y + 3,
+        "text-anchor": "end",
+      });
+      label.textContent = formatHistoryAxisValue(value, kind);
+      svg.append(label);
+    });
+
+    if (min < 0 && max > 0) {
+      const zeroY = yFor(0);
+      svg.append(svgElement("line", {
+        class: "metric-history-zero",
+        x1: margin.left,
+        x2: width - margin.right,
+        y1: zeroY,
+        y2: zeroY,
+      }));
+    }
+
+    svg.append(svgElement("line", {
+      class: "metric-history-axis",
+      x1: margin.left,
+      x2: margin.left,
+      y1: margin.top,
+      y2: height - margin.bottom,
+    }));
+    svg.append(svgElement("line", {
+      class: "metric-history-axis",
+      x1: margin.left,
+      x2: width - margin.right,
+      y1: height - margin.bottom,
+      y2: height - margin.bottom,
+    }));
+
+    const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(index).toFixed(2)} ${yFor(point.raw).toFixed(2)}`).join(" ");
+    svg.append(svgElement("path", {
+      class: "metric-history-line",
+      d: path,
+    }));
+
+    points.forEach((point, index) => {
+      const x = xFor(index);
+      const y = yFor(point.raw);
+      const marker = svgElement("circle", {
+        class: "metric-history-point",
+        cx: x,
+        cy: y,
+        r: 3.4,
+      });
+      const tooltip = svgElement("title");
+      tooltip.textContent = `${point.period}: ${formatHealthMetricValue(point.raw, point.kind || kind)}`;
+      marker.append(tooltip);
+      svg.append(marker);
+
+      const label = svgElement("text", {
+        class: "metric-history-x-label",
+        x,
+        y: height - 7,
+        "text-anchor": "middle",
+      });
+      label.textContent = formatHistoryPeriodLabel(point.period);
+      svg.append(label);
+    });
+
+    return svg;
+  }
+
+  function svgElement(name, attributes = {}) {
+    const element = document.createElementNS(SVG_NS, name);
+    Object.entries(attributes).forEach(([key, value]) => {
+      element.setAttribute(key, String(value));
+    });
+    return element;
+  }
+
+  function formatHistoryChange(points, kind) {
+    const first = points[0];
+    const last = points[points.length - 1];
+    const change = last.raw - first.raw;
+    const relative = first.raw ? formatSignedPercent((change / Math.abs(first.raw)) * 100) : "";
+    return `${first.period} to ${last.period}: ${formatSignedHealthMetricChange(change, kind)}${relative ? ` (${relative})` : ""}`;
+  }
+
+  function formatSignedHealthMetricChange(value, kind) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    const sign = number > 0 ? "+" : "";
+    if (kind === "percent") {
+      return `${sign}${number.toFixed(1)} pp`;
+    }
+    if (kind === "decimal") {
+      const precision = Math.abs(number) < 10 ? 2 : 1;
+      return `${sign}${number.toFixed(precision)}`;
+    }
+    return `${sign}${numberFormatter.format(Math.round(number))}`;
+  }
+
+  function formatHistoryAxisValue(value, kind) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    if (kind === "percent") {
+      const precision = Math.abs(number) < 10 ? 1 : 0;
+      return `${number.toFixed(precision)}%`;
+    }
+    if (kind === "decimal") {
+      const precision = Math.abs(number) < 10 ? 2 : Math.abs(number) < 100 ? 1 : 0;
+      return number.toFixed(precision);
+    }
+    return formatCompactNumber(number);
+  }
+
+  function formatHistoryPeriodLabel(period) {
+    const text = String(period || "");
+    return text.length > 7 ? text.replace(/^20/, "'") : text;
   }
 
   function appendHelpFact(container, label, value) {
@@ -1916,6 +2303,26 @@
       return "Not available";
     }
     return `${formatHealthMetricValue(rawComparison.q1, rawComparison.kind)} to ${formatHealthMetricValue(rawComparison.q3, rawComparison.kind)}`;
+  }
+
+  function formatPercentile(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    const rounded = Math.max(0, Math.min(100, Math.round(number)));
+    const mod100 = rounded % 100;
+    const suffix =
+      mod100 >= 11 && mod100 <= 13
+        ? "th"
+        : rounded % 10 === 1
+          ? "st"
+          : rounded % 10 === 2
+            ? "nd"
+            : rounded % 10 === 3
+              ? "rd"
+              : "th";
+    return `${rounded}${suffix} percentile`;
   }
 
   function formatShownPerCapita(metricItem, rule) {
@@ -2319,6 +2726,18 @@
       maximumFractionDigits: Math.abs(number) < 10000 ? 1 : 0,
     });
     return `${number > 0 ? "+" : ""}${formatter.format(number)}`;
+  }
+
+  function formatCompactNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    const formatter = new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: Math.abs(number) < 10000 ? 1 : 0,
+    });
+    return formatter.format(number);
   }
 
   function formatSignedPercent(value) {
