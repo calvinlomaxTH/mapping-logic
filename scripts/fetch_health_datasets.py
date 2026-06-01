@@ -53,6 +53,22 @@ def fetch_json(url, params=None, timeout=90):
     return json.loads(fetch_text(url, params, timeout))
 
 
+def fetch_api_rows(url, params=None, page_size=5000, timeout=120, max_pages=100):
+    rows = []
+    offset = 0
+    params = dict(params or {})
+    for _ in range(max_pages):
+        page_params = {**params, "size": str(page_size), "offset": str(offset)}
+        batch = fetch_json(url, page_params, timeout=timeout)
+        if not batch:
+            break
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    return rows
+
+
 def clean_name(value):
     text = str(value or "").strip().upper()
     text = re.sub(r"\b(COUNTY|PARISH|BOROUGH|CENSUS AREA|MUNICIPALITY|CITY AND BOROUGH)\b", "", text)
@@ -110,7 +126,21 @@ def text_metric(label, value):
     return {"label": label, "value": str(value or "").strip() or "--", "raw": None, "kind": "text", "aggregate": "first"}
 
 
+def clean_metrics(metrics):
+    clean = []
+    for item in metrics:
+        if item.get("kind") == "text":
+            value = str(item.get("value") or "").strip()
+            if value and value.upper() not in ("--", "N/A", "NA", "NOT AVAILABLE", "SUPPRESSED"):
+                clean.append(item)
+            continue
+        if item.get("raw") is not None:
+            clean.append(item)
+    return clean
+
+
 def add(target, scope, geoid, layer, title, metrics, period="", source=""):
+    metrics = clean_metrics(metrics)
     if not geoid or not metrics:
         return
     bucket = target[scope].setdefault(str(geoid), {})
@@ -139,6 +169,31 @@ def average(values):
     return sum(values) / len(values) if values else None
 
 
+def weighted_average(pairs):
+    total_weight = 0
+    total = 0
+    for value, weight in pairs:
+        if value is None or weight is None or weight <= 0:
+            continue
+        total += value * weight
+        total_weight += weight
+    return total / total_weight if total_weight else None
+
+
+def sum_or_none(values):
+    values = [value for value in values if value is not None]
+    return sum(values) if values else None
+
+
+def date_key(value):
+    parts = [int(part) for part in re.findall(r"\d+", str(value or ""))]
+    if len(parts) >= 3 and parts[0] > 1900:
+        return (parts[0], parts[1], parts[2])
+    if len(parts) >= 3:
+        return (parts[2], parts[0], parts[1])
+    return tuple(parts)
+
+
 def ingest_brfss(data):
     params = {
         "$limit": "50000",
@@ -153,15 +208,18 @@ def ingest_brfss(data):
         "HLTHPLN1": "Health coverage",
     }
     rows = fetch_json(SOURCES["brfss"], params)
-    grouped = defaultdict(list)
+    grouped = defaultdict(lambda: defaultdict(list))
     for row in rows:
         state = ABBR_STATE.get(str(row.get("locationabbr", "")).upper())
         label = wanted.get(row.get("questionid"))
         value = number(row.get("data_value"))
         if state and label and value is not None:
-            grouped[state].append(metric(label, value, "percent", "average"))
-    for state, metrics in grouped.items():
-        add(data, "states", state, "brfss", "BRFSS", metrics, "2024")
+            grouped[state][label].append(value)
+    for state, labels in grouped.items():
+        add(data, "states", state, "brfss", "BRFSS", [
+            metric(label, average(values), "percent", "average")
+            for label, values in labels.items()
+        ], "2024")
 
 
 def ingest_care_compare(data, county_index):
@@ -181,6 +239,7 @@ def ingest_care_compare(data, county_index):
     for (scope, geoid), values in grouped.items():
         add(data, scope, geoid, "cms-care-compare", "CMS Care Compare", [
             metric("Hospitals", values["count"]),
+            metric("Rated hospitals", len(values["ratings"])),
             metric("Avg overall rating", average(values["ratings"]), "decimal", "average"),
         ], "current")
 
@@ -190,6 +249,9 @@ def ingest_hrsa(data, county_index):
     reader = csv.DictReader(io.StringIO(text))
     grouped = defaultdict(int)
     for row in reader:
+        status = str(row_value(row, "Site Status Description", "Health Center Status", "Status")).strip().upper()
+        if status and status not in ("ACTIVE", "OPEN"):
+            continue
         abbr = str(row_value(
             row,
             "state",
@@ -286,7 +348,7 @@ def ingest_medicaid(data, state_names):
     for row in rows:
         state = state_names.get(str(row.get("state", "")).strip().upper())
         program = str(row.get("programtype", "")).strip()
-        month = int(str(row.get("month", "0")).strip() or 0)
+        month = int(digits(row.get("month")) or 0)
         if state and program:
             key = (state, program)
             if key not in latest or month > latest[key]["month"]:
@@ -321,6 +383,7 @@ def ingest_svi(data):
         attrs = item.get("attributes", {})
         county = attrs.get("STCNTY")
         state = attrs.get("ST")
+        population = number(attrs.get("E_TOTPOP"))
         metrics = [
             metric("Overall SVI percentile", number(attrs.get("RPL_THEMES")), "decimal", "average"),
             metric("Socioeconomic theme", number(attrs.get("RPL_THEME1")), "decimal", "average"),
@@ -331,18 +394,29 @@ def ingest_svi(data):
         ]
         add(data, "counties", county, "cdc-atsdr-svi", "CDC/ATSDR SVI", metrics, "2022")
         for metric_item in metrics:
-            state_values[state][metric_item["label"]].append(metric_item["raw"])
+            state_values[state][metric_item["label"]].append((metric_item["raw"], population))
     for state, values in state_values.items():
         add(data, "states", state, "cdc-atsdr-svi", "CDC/ATSDR SVI", [
-            metric(label, average(raw_values), "percent" if "%" in label or label in ("Uninsured", "Unemployment") else "decimal", "average")
+            metric(label, weighted_average(raw_values), "percent" if "%" in label or label in ("Uninsured", "Unemployment") else "decimal", "average")
             for label, raw_values in values.items()
         ], "2022")
 
 
 def ingest_hospital_cost_reports(data, county_index):
-    rows = fetch_json(SOURCES["cms-hospital-cost-reports"], {"size": "5000", "sort": "-Fiscal Year End Date"}, timeout=120)
-    grouped = defaultdict(lambda: {"count": 0, "beds": 0, "costs": 0, "revenue": 0})
+    rows = fetch_api_rows(SOURCES["cms-hospital-cost-reports"], {"sort": "-Fiscal Year End Date"}, timeout=120)
+    latest_by_provider = {}
     for row in rows:
+        provider_id = str(row_value(row, "Provider CCN", "CMS Certification Number (CCN)", "Provider Number", "Provider ID")).strip()
+        report_id = str(row_value(row, "Report Record Number", "RPT_REC_NUM", "Report ID")).strip()
+        key = provider_id or report_id
+        if not key:
+            continue
+        current_date = date_key(row_value(row, "Fiscal Year End Date"))
+        if key not in latest_by_provider or current_date > latest_by_provider[key]["date"]:
+            latest_by_provider[key] = {"date": current_date, "row": row}
+
+    grouped = defaultdict(lambda: {"count": 0, "beds": [], "costs": [], "revenue": []})
+    for row in (item["row"] for item in latest_by_provider.values()):
         abbr = str(row_value(row, "State Code", "Provider State", "State")).upper().strip()
         state = ABBR_STATE.get(abbr)
         county_text = row_value(row, "County FIPS", "Provider County FIPS", "County Code", "County")
@@ -358,16 +432,21 @@ def ingest_hospital_cost_reports(data, county_index):
         for scope, geoid in (("states", state), ("counties", county), ("cbsas", cbsa)):
             if geoid:
                 grouped[(scope, geoid)]["count"] += 1
-                grouped[(scope, geoid)]["beds"] += number(row_value(row, "Number of Beds")) or 0
-                grouped[(scope, geoid)]["costs"] += number(row_value(row, "Total Costs")) or 0
-                grouped[(scope, geoid)]["revenue"] += number(row_value(row, "Net Patient Revenue")) or 0
+                for key, field in (
+                    ("beds", "Number of Beds"),
+                    ("costs", "Total Costs"),
+                    ("revenue", "Net Patient Revenue"),
+                ):
+                    value = number(row_value(row, field))
+                    if value is not None and value >= 0:
+                        grouped[(scope, geoid)][key].append(value)
     for (scope, geoid), values in grouped.items():
         add(data, scope, geoid, "cms-hospital-cost-reports", "CMS Hospital Cost Reports", [
-            metric("Reports", values["count"]),
-            metric("Beds", values["beds"]),
-            metric("Total costs", values["costs"]),
-            metric("Net patient revenue", values["revenue"]),
-        ], "latest 5,000 reports")
+            metric("Latest provider reports", values["count"]),
+            metric("Beds", sum_or_none(values["beds"])),
+            metric("Total costs", sum_or_none(values["costs"])),
+            metric("Net patient revenue", sum_or_none(values["revenue"])),
+        ], "latest report per provider")
 
 
 def ingest_seer_cancer(data):

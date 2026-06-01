@@ -427,7 +427,7 @@
     "Household theme": "SVI percentile for household characteristics indicators.",
     "Poverty 150%": "Percent of people living below 150 percent of the poverty level in the SVI extract.",
     Unemployment: "Percent unemployed in the SVI extract.",
-    Reports: "Number of CMS hospital cost report records matched to this geography.",
+    "Latest provider reports": "Number of latest CMS hospital cost report records matched to this geography after keeping one current report per provider.",
     Beds: "Total hospital beds reported in matched CMS hospital cost reports.",
     "Total costs": "Total costs reported across matched CMS hospital cost reports.",
     "Net patient revenue": "Net patient revenue reported across matched CMS hospital cost reports.",
@@ -1501,7 +1501,8 @@
     }
 
     const metricGroups = new Map();
-    records.forEach((record) => {
+    recordEntries.forEach(([countyId, record]) => {
+      const population = getComparisonPopulation("counties", countyId, populationStore);
       (record.metrics || []).forEach((metricItem) => {
         const key = metricItem.label;
         if (!metricGroups.has(key)) {
@@ -1510,11 +1511,18 @@
             kind: metricItem.kind,
             aggregate: metricItem.aggregate || "sum",
             values: [],
+            weightedTotal: 0,
+            weightTotal: 0,
           });
         }
         const value = Number(metricItem.raw);
         if (Number.isFinite(value)) {
-          metricGroups.get(key).values.push(value);
+          const group = metricGroups.get(key);
+          group.values.push(value);
+          if (population && shouldPopulationWeightMetric(metricItem)) {
+            group.weightedTotal += value * population;
+            group.weightTotal += population;
+          }
         }
       });
     });
@@ -1522,7 +1530,9 @@
     const metrics = Array.from(metricGroups.values()).filter((group) => group.values.length).map((group) => {
       const raw =
         group.aggregate === "average"
-          ? group.values.reduce((total, value) => total + value, 0) / group.values.length
+          ? group.weightTotal
+            ? group.weightedTotal / group.weightTotal
+            : group.values.reduce((total, value) => total + value, 0) / group.values.length
           : group.values.reduce((total, value) => total + value, 0);
       return {
         label: group.label,
@@ -1532,6 +1542,7 @@
         value: formatHealthMetricValue(raw, group.kind),
       };
     });
+    applyDerivedAggregateMetrics(metrics);
     return {
       title: layer.label,
       period: Array.from(new Set(records.map((record) => record.period).filter(Boolean))).join(", "),
@@ -1560,6 +1571,46 @@
       scopeLabel: scope.label,
       metrics: buildIqrByMetric(recordEntries, scope.key, populationStore),
     };
+  }
+
+  function shouldPopulationWeightMetric(metricItem) {
+    return (
+      metricItem.kind === "percent" ||
+      metricItem.label.includes("SVI percentile") ||
+      metricItem.label.includes("theme") ||
+      metricItem.label === "All-cancer incidence rate"
+    );
+  }
+
+  function applyDerivedAggregateMetrics(metrics) {
+    const uninsured = getMetricRaw(metrics, "Uninsured");
+    const insured = getMetricRaw(metrics, "Insured");
+    const insuranceTotal = Number(uninsured) + Number(insured);
+    if (Number.isFinite(uninsured) && Number.isFinite(insured) && Number.isFinite(insuranceTotal) && insuranceTotal > 0) {
+      setMetricRaw(metrics, "Uninsured rate", (uninsured / insuranceTotal) * 100, "percent");
+      setMetricRaw(metrics, "Insured rate", (insured / insuranceTotal) * 100, "percent");
+    }
+
+    const beneficiaries = getMetricRaw(metrics, "Beneficiaries");
+    const medicareAdvantage = getMetricRaw(metrics, "Medicare Advantage");
+    if (Number.isFinite(beneficiaries) && beneficiaries > 0 && Number.isFinite(medicareAdvantage)) {
+      setMetricRaw(metrics, "MA share", (medicareAdvantage / beneficiaries) * 100, "percent");
+    }
+  }
+
+  function getMetricRaw(metrics, label) {
+    const metricItem = metrics.find((item) => item.label === label);
+    return metricItem ? Number(metricItem.raw) : null;
+  }
+
+  function setMetricRaw(metrics, label, raw, kind) {
+    const metricItem = metrics.find((item) => item.label === label);
+    if (!metricItem || !Number.isFinite(raw)) {
+      return;
+    }
+    metricItem.raw = raw;
+    metricItem.kind = kind || metricItem.kind;
+    metricItem.value = formatHealthMetricValue(raw, metricItem.kind);
   }
 
   function getComparisonScope(config) {
