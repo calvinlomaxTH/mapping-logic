@@ -1274,35 +1274,70 @@
   }
 
   function createPopulationTrendPanel(summary) {
-    const panel = createDashboardPanel("Population trend");
+    const panel = createDashboardPanel("Population growth");
     const chart = document.createElement("div");
     const series = (summary.estimateSeries || []).filter((item) => Number.isFinite(item.value));
-    const values = series.map((item) => item.value);
+    const growthSeries = series.slice(1).map((item, index) => ({
+      year: item.year,
+      value: item.value - series[index].value,
+      previousValue: series[index].value,
+    }));
+    const values = growthSeries.map((item) => item.value).filter(Number.isFinite);
 
     if (!values.length) {
-      panel.append(createDashboardMessage("No estimate series is available."));
+      panel.append(createDashboardMessage("No growth series is available."));
       return panel;
     }
 
     const min = Math.min(...values);
     const max = Math.max(...values);
-    const span = max - min || 1;
+    const hasContraction = min < 0;
+    const maxAbs = Math.max(Math.abs(min), Math.abs(max), 1);
+    const zeroLine = hasContraction ? 50 : 0;
+    const maxBarHeight = hasContraction ? 47 : 88;
+    const axisValues = hasContraction
+      ? [maxAbs, 0, -maxAbs]
+      : [max, Math.round(max / 2), 0];
+    const axisLabels = document.createElement("div");
+    const plot = document.createElement("div");
+    const zero = document.createElement("div");
+    const bars = document.createElement("div");
+    const years = document.createElement("div");
 
-    chart.className = "mini-bar-chart";
-    series.forEach((item) => {
-      const bar = document.createElement("div");
-      const fill = document.createElement("span");
-      const label = document.createElement("em");
-      const height = 18 + ((item.value - min) / span) * 72;
-
-      bar.className = "mini-bar";
-      fill.style.height = `${Math.round(height)}%`;
-      fill.title = `${item.year}: ${formatNumberValue(item.value)}`;
-      label.textContent = String(item.year).slice(-2);
-      bar.append(fill, label);
-      chart.append(bar);
+    chart.className = "growth-chart";
+    axisLabels.className = "growth-axis-labels";
+    axisValues.forEach((value) => {
+      const label = document.createElement("span");
+      label.textContent = formatCompactSignedNumber(value);
+      axisLabels.append(label);
     });
 
+    plot.className = "growth-plot";
+    zero.className = "growth-zero-line";
+    zero.style.bottom = `${zeroLine}%`;
+    bars.className = "growth-bars";
+    years.className = "growth-years";
+
+    growthSeries.forEach((item) => {
+      const column = document.createElement("div");
+      const fill = document.createElement("span");
+      const label = document.createElement("em");
+      const magnitude = Math.min(maxBarHeight, (Math.abs(item.value) / maxAbs) * maxBarHeight);
+      const bottom = item.value < 0 ? zeroLine - magnitude : zeroLine;
+
+      column.className = "growth-bar-column";
+      fill.className = item.value < 0 ? "is-negative" : "is-positive";
+      fill.style.height = `${Math.max(2, magnitude)}%`;
+      fill.style.bottom = `${bottom}%`;
+      fill.title = `${item.year}: ${formatSignedNumber(item.value)} (${formatSignedPercent((item.value / item.previousValue) * 100)})`;
+      label.textContent = String(item.year).slice(-2);
+      column.append(fill);
+      bars.append(column);
+      years.append(label);
+    });
+
+    plot.append(zero, bars);
+    chart.append(axisLabels, plot, document.createElement("span"), years);
     panel.append(chart);
     return panel;
   }
@@ -2269,6 +2304,21 @@
     }
     const sign = number > 0 ? "+" : "";
     return `${sign}${numberFormatter.format(number)}`;
+  }
+
+  function formatCompactSignedNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    if (number === 0) {
+      return "0";
+    }
+    const formatter = new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: Math.abs(number) < 10000 ? 1 : 0,
+    });
+    return `${number > 0 ? "+" : ""}${formatter.format(number)}`;
   }
 
   function formatSignedPercent(value) {

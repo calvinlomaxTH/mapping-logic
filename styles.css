@@ -638,6 +638,91 @@ a {
   text-align: center;
 }
 
+.growth-chart {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-rows: 126px 18px;
+  gap: 4px 8px;
+  align-items: stretch;
+}
+
+.growth-axis-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 0 0 2px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 0.68rem;
+  line-height: 1;
+  text-align: right;
+}
+
+.growth-plot {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.54);
+  background:
+    linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px) 0 0 / 100% 100%,
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px) 0 0 / 100% 50%;
+}
+
+.growth-zero-line {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.growth-bars {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 7px;
+  padding: 0 7px;
+}
+
+.growth-bar-column {
+  position: relative;
+  min-width: 0;
+}
+
+.growth-bar-column span {
+  position: absolute;
+  right: 10%;
+  left: 10%;
+  min-height: 2px;
+  border-radius: 0;
+}
+
+.growth-bar-column .is-positive {
+  background: var(--gold);
+}
+
+.growth-bar-column .is-negative {
+  background: #d0d0d0;
+}
+
+.growth-years {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 7px;
+  padding: 0 7px;
+}
+
+.growth-years em {
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.7rem;
+  font-style: normal;
+  text-align: center;
+}
+
 .driver-list {
   display: grid;
   gap: 9px;
