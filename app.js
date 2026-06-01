@@ -2348,18 +2348,26 @@
     ) {
       return "Not available";
     }
-    return `${formatPerCapitaValue(comparison.perCapita.q1, comparison.perCapitaRule)} to ${formatPerCapitaValue(comparison.perCapita.q3, comparison.perCapitaRule)}`;
+    const rule = comparison.perCapitaRule;
+    return `${formatPerCapitaNumber(comparison.perCapita.q1, rule)} to ${formatPerCapitaNumber(comparison.perCapita.q3, rule)} ${rule.unit}`;
   }
 
   function formatPerCapitaValue(value, rule) {
     if (!Number.isFinite(value) || !rule) {
       return "Not available";
     }
+    return `${formatPerCapitaNumber(value, rule)} ${rule.unit}`;
+  }
+
+  function formatPerCapitaNumber(value, rule) {
+    if (!Number.isFinite(value) || !rule) {
+      return "Not available";
+    }
     if (rule.kind === "currency") {
-      return `${currencyFormatter.format(value)} ${rule.unit}`;
+      return currencyFormatter.format(value);
     }
     const precision = Math.abs(value) < 10 ? 2 : Math.abs(value) < 100 ? 1 : 0;
-    return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: precision }).format(value)} ${rule.unit}`;
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: precision }).format(value);
   }
 
   function getComparisonCount(comparison) {

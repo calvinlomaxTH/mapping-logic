@@ -899,7 +899,7 @@ a {
 .metric-help-dialog {
   display: grid;
   gap: 14px;
-  width: min(720px, 100%);
+  width: min(1180px, calc(100vw - 36px));
   max-height: min(760px, calc(100vh - 36px));
   overflow: auto;
   border: 1px solid rgba(247, 197, 96, 0.42);
@@ -939,11 +939,14 @@ a {
 
 .metric-help-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  align-items: start;
   gap: 10px;
 }
 
 .metric-help-item {
   display: grid;
+  align-content: start;
   gap: 8px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 0;
