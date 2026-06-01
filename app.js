@@ -2009,6 +2009,7 @@
       : "Local values have not loaded for this geography yet; the descriptions below explain the visible card fields.";
 
     list.className = "metric-help-list";
+    list.dataset.dynamicLayout = "true";
     const layoutClass = getMetricHelpLayoutClass(metrics.length);
     if (layoutClass) {
       list.classList.add(layoutClass);
@@ -2030,7 +2031,80 @@
     });
     document.body.append(overlay);
     refreshIcons();
+    const fitLayout = () => fitMetricHelpDialog(dialog, list, metrics.length);
+    overlay._metricHelpResizeHandler = fitLayout;
+    window.addEventListener("resize", fitLayout);
+    requestAnimationFrame(fitLayout);
     closeButton.focus();
+  }
+
+  function fitMetricHelpDialog(dialog, list, count) {
+    if (!dialog || !list) {
+      return;
+    }
+
+    const maxColumns = getMetricHelpMaxColumns(dialog, count);
+    const preferredColumns = Math.min(getPreferredMetricHelpColumns(count), maxColumns);
+    const columnCandidates = buildMetricHelpColumnCandidates(preferredColumns, maxColumns);
+    const densityClasses = ["", "metric-help-dialog--compact", "metric-help-dialog--dense"];
+
+    dialog.classList.remove("metric-help-dialog--compact", "metric-help-dialog--dense", "metric-help-dialog--scrollable");
+    for (const densityClass of densityClasses) {
+      applyMetricHelpDensity(dialog, densityClass);
+      for (const columns of columnCandidates) {
+        list.style.setProperty("--metric-help-columns", String(columns));
+        if (!metricHelpNeedsScroll(dialog)) {
+          return;
+        }
+      }
+    }
+
+    applyMetricHelpDensity(dialog, "metric-help-dialog--dense");
+    list.style.setProperty("--metric-help-columns", String(maxColumns));
+    if (metricHelpNeedsScroll(dialog)) {
+      dialog.classList.add("metric-help-dialog--scrollable");
+    }
+  }
+
+  function getPreferredMetricHelpColumns(count) {
+    if (count === 4) {
+      return 2;
+    }
+    if (count === 3 || count === 6) {
+      return 3;
+    }
+    if (count >= 5) {
+      return Math.min(count, 5);
+    }
+    return Math.max(1, count);
+  }
+
+  function getMetricHelpMaxColumns(dialog, count) {
+    const availableWidth = Math.max(280, dialog.clientWidth - 32);
+    const minColumnWidth = availableWidth >= 1380 ? 255 : availableWidth >= 1100 ? 285 : 320;
+    return Math.max(1, Math.min(count || 1, 6, Math.floor(availableWidth / minColumnWidth)));
+  }
+
+  function buildMetricHelpColumnCandidates(preferredColumns, maxColumns) {
+    const candidates = [];
+    for (let columns = preferredColumns; columns <= maxColumns; columns += 1) {
+      candidates.push(columns);
+    }
+    for (let columns = preferredColumns - 1; columns >= 1; columns -= 1) {
+      candidates.push(columns);
+    }
+    return Array.from(new Set(candidates));
+  }
+
+  function applyMetricHelpDensity(dialog, densityClass) {
+    dialog.classList.remove("metric-help-dialog--compact", "metric-help-dialog--dense");
+    if (densityClass) {
+      dialog.classList.add(densityClass);
+    }
+  }
+
+  function metricHelpNeedsScroll(dialog) {
+    return dialog.scrollHeight > dialog.clientHeight + 2 || dialog.scrollWidth > dialog.clientWidth + 2;
   }
 
   function getMetricHelpLayoutClass(count) {
@@ -2048,6 +2122,9 @@
 
   function closeMetricHelp() {
     document.querySelectorAll("[data-metric-help-overlay='true']").forEach((overlay) => {
+      if (overlay._metricHelpResizeHandler) {
+        window.removeEventListener("resize", overlay._metricHelpResizeHandler);
+      }
       overlay.remove();
     });
   }
