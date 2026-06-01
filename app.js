@@ -2009,6 +2009,10 @@
       : "Local values have not loaded for this geography yet; the descriptions below explain the visible card fields.";
 
     list.className = "metric-help-list";
+    const layoutClass = getMetricHelpLayoutClass(metrics.length);
+    if (layoutClass) {
+      list.classList.add(layoutClass);
+    }
     metrics.forEach((metricItem) => {
       list.append(createMetricHelpItem(
         metricItem,
@@ -2027,6 +2031,19 @@
     document.body.append(overlay);
     refreshIcons();
     closeButton.focus();
+  }
+
+  function getMetricHelpLayoutClass(count) {
+    if (count === 3) {
+      return "metric-help-list--three";
+    }
+    if (count === 4) {
+      return "metric-help-list--four";
+    }
+    if (count === 6) {
+      return "metric-help-list--six";
+    }
+    return "";
   }
 
   function closeMetricHelp() {

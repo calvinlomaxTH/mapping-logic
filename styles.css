@@ -944,6 +944,15 @@ a {
   gap: 10px;
 }
 
+.metric-help-list--three,
+.metric-help-list--six {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-help-list--four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .metric-help-item {
   display: grid;
   align-content: start;
@@ -1256,6 +1265,11 @@ a {
     left: 14px;
     bottom: 14px;
   }
+
+  .metric-help-list--three,
+  .metric-help-list--six {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {
@@ -1276,6 +1290,13 @@ a {
 
   .toolbar-button span {
     display: none;
+  }
+
+  .metric-help-list,
+  .metric-help-list--three,
+  .metric-help-list--four,
+  .metric-help-list--six {
+    grid-template-columns: 1fr;
   }
 
   .legend {
