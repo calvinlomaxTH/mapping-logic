@@ -39,6 +39,8 @@
   const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
   const HEALTH_DATA_PATH = "data/health/health-layer-values.json";
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const HIFLD_HOSPITALS_FEATURESERVER =
+    "https://services.arcgis.com/XG15cJAlne2vxtgt/ArcGIS/rest/services/Hospitals_hifld/FeatureServer/0";
   const HIFLD_MEDICAL_FACILITIES_FEATURESERVER =
     "https://services9.arcgis.com/FF3qnCUixr5w9JQi/ArcGIS/rest/services/US_HIFLD_Assets/FeatureServer/2";
   const HRSA_PRIMARY_HEALTH_MAPSERVER =
@@ -281,16 +283,36 @@
       key: "hifld-hospitals",
       label: "Hospitals",
       sourceName: "HIFLD",
-      sourceUrl: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
-      coverage: "Hospital facility points",
-      url: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
-      where: "AssetType = 'Hospital'",
+      sourceUrl: HIFLD_HOSPITALS_FEATURESERVER,
+      coverage: "Hospital facility points with operations and source metadata",
+      url: HIFLD_HOSPITALS_FEATURESERVER,
       color: "#ff6b6b",
       legend: "Hospitals",
-      titleFields: ["Name", "name", "NAME"],
+      titleFields: ["NAME", "Name", "name"],
       popupFields: [
-        { label: "Asset type", fields: ["AssetType"] },
-        { label: "Facility type", fields: ["FacilityType"] },
+        { label: "Hospital type", fields: ["TYPE", "FacilityType"] },
+        { label: "Status", fields: ["STATUS"] },
+        { label: "Beds", fields: ["BEDS"], format: "integer" },
+        { label: "Total staff", fields: ["TTL_STAFF"], format: "integer" },
+        { label: "Trauma designation", fields: ["TRAUMA"] },
+        { label: "Helipad", fields: ["HELIPAD"] },
+        { label: "Owner", fields: ["OWNER"] },
+        { label: "Address", fields: ["ADDRESS"] },
+        { label: "City", fields: ["CITY"] },
+        { label: "State", fields: ["STATE"] },
+        { label: "ZIP", fields: ["ZIP", "ZIP4"] },
+        { label: "County", fields: ["COUNTY"] },
+        { label: "County FIPS", fields: ["COUNTYFIPS"] },
+        { label: "Phone", fields: ["TELEPHONE"] },
+        { label: "Website", fields: ["WEBSITE"], link: true },
+        { label: "NAICS", fields: ["NAICS_DESC", "NAICS_CODE"] },
+        { label: "Source", fields: ["SOURCE"] },
+        { label: "Source date", fields: ["SOURCEDATE"] },
+        { label: "Validation", fields: ["VAL_METHOD"] },
+        { label: "Validation date", fields: ["VAL_DATE"] },
+        { label: "State ID", fields: ["STATE_ID", "ID"] },
+        { label: "Alternate name", fields: ["ALT_NAME"] },
+        { label: "Coordinates", fields: ["LATITUDE", "LONGITUDE"], format: "coordinates" },
       ],
     },
     {
@@ -1001,7 +1023,7 @@
 
     L.popup({
       className: "facility-popup",
-      maxWidth: 360,
+      maxWidth: 460,
     })
       .setLatLng(event.latlng)
       .setContent(createFacilityPopupContent(config, properties, title))
@@ -1021,7 +1043,7 @@
     facts.className = "facility-popup-facts";
 
     config.popupFields.forEach((item) => {
-      const value = getFacilityFieldValue(properties, item.fields);
+      const value = getFacilityPopupFieldValue(properties, item);
       if (!value) {
         return;
       }
@@ -1030,7 +1052,7 @@
       term.textContent = item.label;
       if (item.link && isLikelyUrl(value)) {
         const link = document.createElement("a");
-        link.href = value;
+        link.href = createFacilityLinkHref(value);
         link.target = "_blank";
         link.rel = "noreferrer";
         link.textContent = value;
@@ -1040,12 +1062,74 @@
       }
       facts.append(term, detail);
     });
+    appendFacilityContextFacts(facts, config, properties);
 
     container.append(heading, source);
     if (facts.children.length) {
       container.append(facts);
     }
     return container;
+  }
+
+  function appendFacilityContextFacts(facts, config, properties) {
+    if (config.key !== "hifld-hospitals") {
+      return;
+    }
+
+    const countyFips = normalizeCountyFips(getFacilityFieldValue(properties, ["COUNTYFIPS"]));
+    if (!countyFips) {
+      return;
+    }
+
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = "County population";
+    detail.textContent = "Loading...";
+    facts.append(term, detail);
+
+    getPopulationData()
+      .then((store) => {
+        const record = store && store.byCounty && store.byCounty.get(countyFips);
+        const estimate = record ? parseNumeric(record[`POPESTIMATE${store.latestYear}`]) : null;
+        if (estimate === null) {
+          term.remove();
+          detail.remove();
+          return;
+        }
+        detail.textContent = `${numberFormatter.format(estimate)} (${store.latestYear} estimate)`;
+      })
+      .catch(() => {
+        term.remove();
+        detail.remove();
+      });
+  }
+
+  function normalizeCountyFips(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    return digits.length === 5 ? digits : "";
+  }
+
+  function getFacilityPopupFieldValue(properties, item) {
+    if (item.format === "coordinates") {
+      const latitude = Number(getFacilityFieldValue(properties, [item.fields[0]]));
+      const longitude = Number(getFacilityFieldValue(properties, [item.fields[1]]));
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        return "";
+      }
+      return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    }
+
+    const value = getFacilityFieldValue(properties, item.fields);
+    if (!value) {
+      return "";
+    }
+
+    if (item.format === "integer") {
+      const number = Number(String(value).replace(/,/g, ""));
+      return Number.isFinite(number) && number > 0 ? numberFormatter.format(number) : "";
+    }
+
+    return value;
   }
 
   function getFacilityFieldValue(properties, fields) {
@@ -1055,7 +1139,7 @@
         continue;
       }
       const text = String(value).trim();
-      if (!text || text === "0" || text.toUpperCase() === "N/A" || text.toUpperCase() === "NA") {
+      if (!text || text === "0" || isEmptyFacilityValue(text)) {
         continue;
       }
       return text;
@@ -1063,8 +1147,19 @@
     return "";
   }
 
+  function isEmptyFacilityValue(value) {
+    const normalized = String(value || "").trim().toUpperCase();
+    return ["-999", "N/A", "NA", "NULL", "NONE", "UNKNOWN", "NOT AVAILABLE", "NOT REPORTED", "NOT PROVIDED"].includes(normalized);
+  }
+
   function isLikelyUrl(value) {
-    return /^https?:\/\//i.test(String(value || ""));
+    const text = String(value || "").trim();
+    return /^https?:\/\//i.test(text) || /^[a-z0-9.-]+\.[a-z]{2,}(?:\/|$)/i.test(text);
+  }
+
+  function createFacilityLinkHref(value) {
+    const text = String(value || "").trim();
+    return /^https?:\/\//i.test(text) ? text : `https://${text}`;
   }
 
   function bringFacilityLayersToFront() {

@@ -1268,7 +1268,7 @@ a {
 
 .facility-popup-content {
   display: grid;
-  min-width: min(300px, calc(100vw - 72px));
+  width: min(420px, calc(100vw - 72px));
   gap: 8px;
 }
 
@@ -1291,7 +1291,7 @@ a {
 
 .facility-popup-facts {
   display: grid;
-  grid-template-columns: minmax(82px, 0.48fr) minmax(0, 1fr);
+  grid-template-columns: minmax(108px, 0.44fr) minmax(0, 1fr);
   gap: 5px 9px;
   margin: 0;
 }
