@@ -474,10 +474,11 @@
       sourceUrl: "https://data.cms.gov/provider-compliance/cost-reports/hospital-provider-cost-report",
       modes: ["states", "counties", "metros"],
       coverage: "Hospital providers",
+      directCbsaOnly: true,
       selectionNotes: {
         states: "Hospital reports by provider state",
         counties: "Hospital reports by provider county",
-        metros: "Hospital reports matched to MSA footprint",
+        metros: "Hospital reports matched by CMS Medicare CBSA Number",
       },
     },
     {
@@ -535,8 +536,8 @@
     "Household theme": "SVI percentile for household characteristics indicators.",
     "Poverty 150%": "Percent of people living below 150 percent of the poverty level in the SVI extract.",
     Unemployment: "Percent unemployed in the SVI extract.",
-    "Latest provider reports": "Number of latest CMS hospital cost report records matched to this geography after keeping one current report per provider.",
-    Beds: "Total hospital beds reported in matched CMS hospital cost reports.",
+    "Latest provider reports": "Number of latest CMS hospital cost report records matched to this geography after keeping one current report per provider. For MSAs, records are matched by the CMS Medicare CBSA Number field.",
+    Beds: "Total hospital beds reported in matched CMS hospital cost reports. For MSAs, this is the sum of reports whose CMS Medicare CBSA Number matches the selected CBSA, not a county-footprint rollup.",
     "Total costs": "Total costs reported across matched CMS hospital cost reports.",
     "Net patient revenue": "Net patient revenue reported across matched CMS hospital cost reports.",
     "All-cancer incidence rate": "Age-adjusted all-cancer incidence rate per 100,000 people.",
@@ -1991,6 +1992,9 @@
     if (directRecord) {
       return directRecord;
     }
+    if (layer.directCbsaOnly) {
+      return null;
+    }
     return aggregateHealthLayerForMsa(store, layer, populationStore);
   }
 
@@ -2410,10 +2414,18 @@
       return;
     }
 
-    const statusText = source && source.status === "source-only"
-      ? source.note || "Source linked; bulk data requires source terms."
-      : "No matching local value for this geography.";
+    const statusText = getMissingHealthLayerStatus(layer, source, config);
     status.textContent = statusText;
+  }
+
+  function getMissingHealthLayerStatus(layer, source, config) {
+    if (source && source.status === "source-only") {
+      return source.note || "Source linked; bulk data requires source terms.";
+    }
+    if (config.mode === "metros" && layer.directCbsaOnly) {
+      return "No CMS records matched this CBSA directly; county-footprint rollup is intentionally not used for this layer.";
+    }
+    return "No matching local value for this geography.";
   }
 
   function setDataLayerCardsMessage(message, container) {
