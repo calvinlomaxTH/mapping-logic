@@ -45,13 +45,61 @@
           </label>
         </section>
 
-        <section class="control-section" aria-labelledby="data-layer-heading">
+        <section class="control-section" aria-labelledby="map-focus-heading">
+          <div class="section-title" id="map-focus-heading">
+            <i data-lucide="map"></i>
+            <span>Map Focus</span>
+          </div>
+          <div class="segmented map-focus-control" role="radiogroup" aria-label="Map focus">
+            <button class="segment is-active" type="button" data-map-focus="healthcare-sites" aria-pressed="true">
+              Healthcare Sites
+            </button>
+            <button class="segment" type="button" data-map-focus="location-data" aria-pressed="false">
+              Location Data
+            </button>
+          </div>
+        </section>
+
+        <section class="control-section collapsible-section is-collapsed" id="dataLayerSection" aria-labelledby="data-layer-heading">
           <div class="section-title" id="data-layer-heading">
             <i data-lucide="activity"></i>
             <span>Data Layers</span>
             <span class="section-pill" id="dataLayerSummary">--</span>
+            <button
+              class="section-toggle-button"
+              id="dataLayerPanelToggle"
+              type="button"
+              aria-controls="dataLayerPanelContent"
+              aria-expanded="false"
+              title="Show data layers"
+            >
+              <i data-lucide="chevron-down"></i>
+            </button>
           </div>
-          <div class="data-layer-list" id="dataLayerList" aria-label="Health data layers"></div>
+          <div class="collapsible-content" id="dataLayerPanelContent" hidden>
+            <div class="data-layer-list" id="dataLayerList" aria-label="Health data layers"></div>
+          </div>
+        </section>
+
+        <section class="control-section collapsible-section" id="facilityLayerSection" aria-labelledby="facility-layer-heading">
+          <div class="section-title" id="facility-layer-heading">
+            <i data-lucide="hospital"></i>
+            <span>Healthcare Sites</span>
+            <span class="section-pill" id="facilityLayerSummary">--</span>
+            <button
+              class="section-toggle-button"
+              id="facilityLayerPanelToggle"
+              type="button"
+              aria-controls="facilityLayerPanelContent"
+              aria-expanded="true"
+              title="Hide healthcare sites"
+            >
+              <i data-lucide="chevron-up"></i>
+            </button>
+          </div>
+          <div class="collapsible-content" id="facilityLayerPanelContent">
+            <div class="data-layer-list facility-layer-list" id="facilityLayerList" aria-label="Healthcare site map layers"></div>
+          </div>
         </section>
 
         <section class="control-section" aria-labelledby="search-heading">
@@ -123,7 +171,9 @@
         </section>
 
         <footer class="source-note">
-          Data: <a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_restmapservice.html" target="_blank" rel="noreferrer">U.S. Census TIGERweb</a>.
+          Data: <a href="https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_restmapservice.html" target="_blank" rel="noreferrer">U.S. Census TIGERweb</a>,
+          <a href="https://hifld-geoplatform.opendata.arcgis.com/" target="_blank" rel="noreferrer">HIFLD</a>, and
+          <a href="https://data.hrsa.gov/topics/health-centers" target="_blank" rel="noreferrer">HRSA</a>.
           Basemaps: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> and <a href="https://www.esri.com/en-us/legal/terms/full-master-agreement" target="_blank" rel="noreferrer">Esri</a>.
         </footer>
       </aside>

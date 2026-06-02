@@ -14,6 +14,12 @@
   const searchResults = document.getElementById("searchResults");
   const dataLayerList = document.getElementById("dataLayerList");
   const dataLayerSummary = document.getElementById("dataLayerSummary");
+  const dataLayerSection = document.getElementById("dataLayerSection");
+  const dataLayerPanelToggle = document.getElementById("dataLayerPanelToggle");
+  const facilityLayerList = document.getElementById("facilityLayerList");
+  const facilityLayerSummary = document.getElementById("facilityLayerSummary");
+  const facilityLayerSection = document.getElementById("facilityLayerSection");
+  const facilityLayerPanelToggle = document.getElementById("facilityLayerPanelToggle");
   const includeMicroInput = document.getElementById("includeMicro");
   const panelToggle = document.getElementById("panelToggle");
   const basemapControl = document.getElementById("basemapControl");
@@ -33,6 +39,10 @@
   const POPULATION_DATA_PATHS = ["data/co-est2025-alldata.csv", "data/co-est-alldata.csv"];
   const HEALTH_DATA_PATH = "data/health/health-layer-values.json";
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const HIFLD_MEDICAL_FACILITIES_FEATURESERVER =
+    "https://services9.arcgis.com/FF3qnCUixr5w9JQi/ArcGIS/rest/services/US_HIFLD_Assets/FeatureServer/2";
+  const HRSA_PRIMARY_HEALTH_MAPSERVER =
+    "https://gisportal.hrsa.gov/server/rest/services/HealthCareFacilities/PrimaryHealthCareFacilities_FS/MapServer";
   const CDC_SVI_COUNTY_LAYER_URL =
     "https://onemap.cdc.gov/onemapservices/rest/services/SVI/CDC_ATSDR_Social_Vulnerability_Index_2022_USA/FeatureServer/1";
   const CMS_MEDICARE_ENROLLMENT_API =
@@ -266,6 +276,81 @@
     },
   };
 
+  const FACILITY_SITE_LAYERS = [
+    {
+      key: "hifld-hospitals",
+      label: "Hospitals",
+      sourceName: "HIFLD",
+      sourceUrl: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
+      coverage: "Hospital facility points",
+      url: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
+      where: "AssetType = 'Hospital'",
+      color: "#ff6b6b",
+      legend: "Hospitals",
+      titleFields: ["Name", "name", "NAME"],
+      popupFields: [
+        { label: "Asset type", fields: ["AssetType"] },
+        { label: "Facility type", fields: ["FacilityType"] },
+      ],
+    },
+    {
+      key: "hrsa-health-centers",
+      label: "Clinics / Health Centers",
+      sourceName: "HRSA",
+      sourceUrl: `${HRSA_PRIMARY_HEALTH_MAPSERVER}/0`,
+      coverage: "HRSA service delivery sites",
+      url: `${HRSA_PRIMARY_HEALTH_MAPSERVER}/0`,
+      color: "#42d6d0",
+      legend: "HRSA health centers",
+      titleFields: ["SITE_NM"],
+      popupFields: [
+        { label: "Type", fields: ["HCC_TYP_DESC", "HCC_LOC_DESC"] },
+        { label: "Status", fields: ["HCC_STATUS_DESC"] },
+        { label: "Address", fields: ["SITE_ADDRESS"] },
+        { label: "City", fields: ["SITE_CITY"] },
+        { label: "State", fields: ["SITE_STATE_ABBR"] },
+        { label: "County", fields: ["COUNTY_NM", "COUNTY_DESC"] },
+        { label: "Phone", fields: ["SITE_PHONE_NUM"] },
+        { label: "Hours / week", fields: ["TOT_OPER_HR_PER_WEEK"] },
+        { label: "Population", fields: ["SITE_POP_TYP_DESC"] },
+        { label: "Operator", fields: ["GRANTEE_NM"] },
+        { label: "Website", fields: ["SITE_URL"], link: true },
+      ],
+    },
+    {
+      key: "hifld-urgent-care",
+      label: "Urgent Care",
+      sourceName: "HIFLD",
+      sourceUrl: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
+      coverage: "Urgent care facility points",
+      url: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
+      where: "AssetType = 'Urgent Care'",
+      color: "#f7c560",
+      legend: "Urgent care",
+      titleFields: ["Name", "name", "NAME"],
+      popupFields: [
+        { label: "Asset type", fields: ["AssetType"] },
+        { label: "Facility type", fields: ["FacilityType"] },
+      ],
+    },
+    {
+      key: "hifld-other-medical",
+      label: "Other Medical Facilities",
+      sourceName: "HIFLD",
+      sourceUrl: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
+      coverage: "VA health and EMS facility points",
+      url: HIFLD_MEDICAL_FACILITIES_FEATURESERVER,
+      where: "AssetType IN ('VA Health Facility', 'EMS')",
+      color: "#8fd14f",
+      legend: "Other medical facilities",
+      titleFields: ["Name", "name", "NAME"],
+      popupFields: [
+        { label: "Asset type", fields: ["AssetType"] },
+        { label: "Facility type", fields: ["FacilityType"] },
+      ],
+    },
+  ];
+
   const HEALTH_DATA_LAYERS = [
     {
       key: "brfss",
@@ -462,18 +547,21 @@
   let selectionToken = 0;
   let currentSelection = null;
   let dashboardExpanded = false;
+  let mapFocus = "healthcare-sites";
   let dashboardDataToken = 0;
   const msaEstimateCache = new Map();
   let populationDataPromise = null;
   let healthDataPromise = null;
   const dataLayerValueCache = new Map();
   const selectedHealthLayerKeys = new Set(HEALTH_DATA_LAYERS.map((layer) => layer.key));
+  const selectedFacilityLayerKeys = new Set(FACILITY_SITE_LAYERS.map((layer) => layer.key));
+  const facilityLayersByKey = new Map();
 
   const map = L.map("map", {
     center: [39.5, -98.35],
     zoom: getHomeZoom(),
     minZoom: 3,
-    maxZoom: 13,
+    maxZoom: 18,
     zoomControl: false,
     preferCanvas: true,
   });
@@ -492,14 +580,20 @@
   );
 
   renderDataLayerControls();
+  renderFacilityLayerControls();
   wireControls();
   refreshIcons();
   setMode("states");
+  syncFacilitySiteLayers();
   updateCounts();
 
   function wireControls() {
     document.querySelectorAll("[data-mode]").forEach((button) => {
       button.addEventListener("click", () => setMode(button.dataset.mode));
+    });
+
+    document.querySelectorAll("[data-map-focus]").forEach((button) => {
+      button.addEventListener("click", () => setMapFocus(button.dataset.mapFocus));
     });
 
     includeMicroInput.addEventListener("change", () => {
@@ -512,6 +606,9 @@
     });
 
     dataLayerList.addEventListener("change", handleDataLayerToggle);
+    facilityLayerList.addEventListener("change", handleFacilityLayerToggle);
+    dataLayerPanelToggle.addEventListener("click", () => toggleCollapsibleSection(dataLayerSection, dataLayerPanelToggle, "data layers"));
+    facilityLayerPanelToggle.addEventListener("click", () => toggleCollapsibleSection(facilityLayerSection, facilityLayerPanelToggle, "healthcare sites"));
     expandedDataButton.addEventListener("click", toggleExpandedDashboard);
 
     searchForm.addEventListener("submit", (event) => {
@@ -580,6 +677,63 @@
     });
 
     map.on("click", handleMapClick);
+  }
+
+  function toggleCollapsibleSection(section, button, label) {
+    if (!section || !button) {
+      return;
+    }
+    const collapsed = !section.classList.contains("is-collapsed");
+    section.classList.toggle("is-collapsed", collapsed);
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.title = `${collapsed ? "Show" : "Hide"} ${label}`;
+    const content = document.getElementById(button.getAttribute("aria-controls"));
+    if (content) {
+      content.hidden = collapsed;
+    }
+    button.innerHTML = `<i data-lucide="${collapsed ? "chevron-down" : "chevron-up"}"></i>`;
+    refreshIcons();
+  }
+
+  function setMapFocus(nextFocus) {
+    if (!["healthcare-sites", "location-data"].includes(nextFocus) || nextFocus === mapFocus) {
+      return;
+    }
+    mapFocus = nextFocus;
+    document.querySelectorAll("[data-map-focus]").forEach((button) => {
+      const active = button.dataset.mapFocus === mapFocus;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+
+    if (mapFocus === "healthcare-sites") {
+      setCollapsibleSection(dataLayerSection, dataLayerPanelToggle, true, "data layers");
+      setCollapsibleSection(facilityLayerSection, facilityLayerPanelToggle, false, "healthcare sites");
+      syncFacilitySiteLayers();
+      setStatus("Healthcare site overlays visible.");
+    } else {
+      setCollapsibleSection(dataLayerSection, dataLayerPanelToggle, false, "data layers");
+      setCollapsibleSection(facilityLayerSection, facilityLayerPanelToggle, true, "healthcare sites");
+      syncFacilitySiteLayers();
+      setStatus("Healthcare site overlays hidden. Location data layers are active for selections.");
+    }
+    updateFacilityLayerSummary();
+    updateLegend();
+  }
+
+  function setCollapsibleSection(section, button, collapsed, label) {
+    if (!section || !button) {
+      return;
+    }
+    section.classList.toggle("is-collapsed", collapsed);
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.title = `${collapsed ? "Show" : "Hide"} ${label}`;
+    const content = document.getElementById(button.getAttribute("aria-controls"));
+    if (content) {
+      content.hidden = collapsed;
+    }
+    button.innerHTML = `<i data-lucide="${collapsed ? "chevron-down" : "chevron-up"}"></i>`;
+    refreshIcons();
   }
 
   function setBasemapMenuOpen(open) {
@@ -658,6 +812,52 @@
     refreshIcons();
   }
 
+  function renderFacilityLayerControls() {
+    facilityLayerList.replaceChildren();
+
+    FACILITY_SITE_LAYERS.forEach((layer) => {
+      const item = document.createElement("div");
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      const copy = document.createElement("span");
+      const name = document.createElement("span");
+      const meta = document.createElement("span");
+      const sourceLink = document.createElement("a");
+
+      item.className = "data-layer-item facility-layer-item";
+      item.classList.toggle("is-active", selectedFacilityLayerKeys.has(layer.key));
+      item.style.setProperty("--facility-layer-color", layer.color);
+
+      label.className = "data-layer-option facility-layer-option";
+      checkbox.type = "checkbox";
+      checkbox.value = layer.key;
+      checkbox.checked = selectedFacilityLayerKeys.has(layer.key);
+      checkbox.setAttribute("aria-label", layer.label);
+
+      copy.className = "data-layer-copy";
+      name.className = "data-layer-name";
+      meta.className = "data-layer-meta";
+      name.textContent = layer.label;
+      meta.textContent = `${layer.sourceName} - ${layer.coverage}`;
+      copy.append(name, meta);
+      label.append(checkbox, copy);
+
+      sourceLink.className = "data-layer-source";
+      sourceLink.href = layer.sourceUrl;
+      sourceLink.target = "_blank";
+      sourceLink.rel = "noreferrer";
+      sourceLink.title = `Open ${layer.label} source`;
+      sourceLink.setAttribute("aria-label", `Open ${layer.label} source`);
+      sourceLink.innerHTML = '<i data-lucide="external-link"></i>';
+
+      item.append(label, sourceLink);
+      facilityLayerList.append(item);
+    });
+
+    updateFacilityLayerSummary();
+    refreshIcons();
+  }
+
   function handleDataLayerToggle(event) {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
@@ -684,10 +884,43 @@
     setStatus(`${layer.label} ${input.checked ? "active" : "hidden"}.`);
   }
 
+  function handleFacilityLayerToggle(event) {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+      return;
+    }
+
+    const layer = FACILITY_SITE_LAYERS.find((item) => item.key === input.value);
+    if (!layer) {
+      return;
+    }
+
+    if (input.checked) {
+      selectedFacilityLayerKeys.add(layer.key);
+    } else {
+      selectedFacilityLayerKeys.delete(layer.key);
+    }
+
+    const item = input.closest(".data-layer-item");
+    if (item) {
+      item.classList.toggle("is-active", input.checked);
+    }
+    syncFacilitySiteLayers();
+    updateFacilityLayerSummary();
+    updateLegend();
+    const visibleText = mapFocus === "healthcare-sites" && input.checked ? "visible" : input.checked ? "selected" : "hidden";
+    setStatus(`${layer.label} site layer ${visibleText}.`);
+  }
+
   function updateDataLayerSummary() {
     const applicableLayers = getApplicableHealthLayers(currentMode);
     const activeCount = getSelectedApplicableHealthLayers(currentMode).length;
     dataLayerSummary.textContent = `${numberFormatter.format(activeCount)}/${numberFormatter.format(applicableLayers.length)} active`;
+  }
+
+  function updateFacilityLayerSummary() {
+    const label = mapFocus === "healthcare-sites" ? "visible" : "selected";
+    facilityLayerSummary.textContent = `${numberFormatter.format(selectedFacilityLayerKeys.size)}/${numberFormatter.format(FACILITY_SITE_LAYERS.length)} ${label}`;
   }
 
   function getApplicableHealthLayers(mode) {
@@ -696,6 +929,150 @@
 
   function getSelectedApplicableHealthLayers(mode) {
     return getApplicableHealthLayers(mode).filter((layer) => selectedHealthLayerKeys.has(layer.key));
+  }
+
+  function syncFacilitySiteLayers() {
+    FACILITY_SITE_LAYERS.forEach((config) => {
+      const visible = mapFocus === "healthcare-sites" && selectedFacilityLayerKeys.has(config.key);
+      const existingLayer = facilityLayersByKey.get(config.key);
+
+      if (visible && !existingLayer) {
+        const layer = createFacilitySiteLayer(config);
+        facilityLayersByKey.set(config.key, layer);
+        layer.addTo(map);
+      } else if (!visible && existingLayer) {
+        map.removeLayer(existingLayer);
+        facilityLayersByKey.delete(config.key);
+      }
+    });
+    bringFacilityLayersToFront();
+  }
+
+  function createFacilitySiteLayer(config) {
+    const layer = L.esri.featureLayer({
+      url: config.url,
+      where: config.where || "1=1",
+      fields: ["*"],
+      simplifyFactor: 0.3,
+      precision: 5,
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, getFacilityMarkerStyle(config)),
+    });
+    let loaded = false;
+    layer.on("load", () => {
+      if (!loaded) {
+        loaded = true;
+        setStatus(`${config.label} site layer ready.`);
+      }
+    });
+    layer.on("requesterror", () => {
+      setStatus(`Could not load ${config.label} site layer.`);
+    });
+    layer.on("click", (event) => selectFacilitySite(config, event));
+    return layer;
+  }
+
+  function getFacilityMarkerStyle(config, selected) {
+    return {
+      radius: selected ? 8 : 5,
+      color: selected ? "#000000" : "#ffffff",
+      weight: selected ? 2.5 : 1.4,
+      fillColor: config.color,
+      fillOpacity: selected ? 0.98 : 0.82,
+      opacity: 0.95,
+      bubblingMouseEvents: false,
+    };
+  }
+
+  function selectFacilitySite(config, event) {
+    if (event.originalEvent) {
+      L.DomEvent.stop(event.originalEvent);
+    }
+    const featureLayer = event.layer;
+    const properties = (featureLayer && featureLayer.feature && featureLayer.feature.properties) || {};
+    const title = getFacilityFieldValue(properties, config.titleFields) || config.label;
+    if (featureLayer && typeof featureLayer.setStyle === "function") {
+      featureLayer.setStyle(getFacilityMarkerStyle(config, true));
+      map.once("popupclose", () => {
+        if (typeof featureLayer.setStyle === "function") {
+          featureLayer.setStyle(getFacilityMarkerStyle(config));
+        }
+      });
+    }
+
+    L.popup({
+      className: "facility-popup",
+      maxWidth: 360,
+    })
+      .setLatLng(event.latlng)
+      .setContent(createFacilityPopupContent(config, properties, title))
+      .openOn(map);
+    setStatus(`${config.label}: ${title}`);
+  }
+
+  function createFacilityPopupContent(config, properties, title) {
+    const container = document.createElement("div");
+    const heading = document.createElement("h3");
+    const source = document.createElement("p");
+    const facts = document.createElement("dl");
+
+    container.className = "facility-popup-content";
+    heading.textContent = title;
+    source.textContent = `${config.sourceName} - ${config.coverage}`;
+    facts.className = "facility-popup-facts";
+
+    config.popupFields.forEach((item) => {
+      const value = getFacilityFieldValue(properties, item.fields);
+      if (!value) {
+        return;
+      }
+      const term = document.createElement("dt");
+      const detail = document.createElement("dd");
+      term.textContent = item.label;
+      if (item.link && isLikelyUrl(value)) {
+        const link = document.createElement("a");
+        link.href = value;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = value;
+        detail.append(link);
+      } else {
+        detail.textContent = value;
+      }
+      facts.append(term, detail);
+    });
+
+    container.append(heading, source);
+    if (facts.children.length) {
+      container.append(facts);
+    }
+    return container;
+  }
+
+  function getFacilityFieldValue(properties, fields) {
+    for (const field of fields || []) {
+      const value = properties[field];
+      if (value === null || value === undefined) {
+        continue;
+      }
+      const text = String(value).trim();
+      if (!text || text === "0" || text.toUpperCase() === "N/A" || text.toUpperCase() === "NA") {
+        continue;
+      }
+      return text;
+    }
+    return "";
+  }
+
+  function isLikelyUrl(value) {
+    return /^https?:\/\//i.test(String(value || ""));
+  }
+
+  function bringFacilityLayersToFront() {
+    facilityLayersByKey.forEach((layer) => {
+      if (layer && typeof layer.bringToFront === "function") {
+        layer.bringToFront();
+      }
+    });
   }
 
   function setMode(mode) {
@@ -728,6 +1105,7 @@
       activeLayers.push(layer);
       layer.addTo(map);
     });
+    bringFacilityLayersToFront();
   }
 
   function createBoundaryLayer(config) {
@@ -2584,6 +2962,20 @@
       if (config.style.dashArray) {
         swatch.style.borderStyle = "dashed";
       }
+      label.textContent = config.legend;
+      row.append(swatch, label);
+      legendElement.append(row);
+    });
+
+    FACILITY_SITE_LAYERS.filter((config) => mapFocus === "healthcare-sites" && selectedFacilityLayerKeys.has(config.key)).forEach((config) => {
+      const row = document.createElement("div");
+      const swatch = document.createElement("span");
+      const label = document.createElement("span");
+
+      row.className = "legend-row";
+      swatch.className = "legend-swatch legend-swatch-site";
+      swatch.style.border = `2px solid ${config.color}`;
+      swatch.style.background = config.color;
       label.textContent = config.legend;
       row.append(swatch, label);
       legendElement.append(row);
