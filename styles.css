@@ -574,6 +574,13 @@ a {
   font-weight: 650;
 }
 
+.selection-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.48fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+
 .dashboard-toggle {
   display: inline-flex;
   width: 100%;
@@ -581,7 +588,7 @@ a {
   justify-content: center;
   gap: 8px;
   min-height: 42px;
-  margin-top: 16px;
+  margin: 0;
   border: 1px solid rgba(247, 197, 96, 0.55);
   border-radius: 0;
   color: #000000;
@@ -592,6 +599,20 @@ a {
 
 .dashboard-toggle:hover {
   background: #ffd781;
+}
+
+.dashboard-toggle:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.export-toggle {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.export-toggle:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .dashboard-toggle svg {

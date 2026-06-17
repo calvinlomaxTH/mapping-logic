@@ -7,6 +7,7 @@
   const selectionSubtitle = document.getElementById("selectionSubtitle");
   const detailsList = document.getElementById("detailsList");
   const expandedDataButton = document.getElementById("expandedDataButton");
+  const exportLocaleButton = document.getElementById("exportLocaleButton");
   const expandedDataDashboard = document.getElementById("expandedDataDashboard");
   const searchForm = document.getElementById("searchForm");
   const searchInput = document.getElementById("searchInput");
@@ -633,6 +634,7 @@
     dataLayerPanelToggle.addEventListener("click", () => toggleCollapsibleSection(dataLayerSection, dataLayerPanelToggle, "data layers"));
     facilityLayerPanelToggle.addEventListener("click", () => toggleCollapsibleSection(facilityLayerSection, facilityLayerPanelToggle, "healthcare sites"));
     expandedDataButton.addEventListener("click", toggleExpandedDashboard);
+    exportLocaleButton.addEventListener("click", exportCurrentLocaleData);
 
     searchForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1509,6 +1511,8 @@
     detailsList.replaceChildren();
     expandedDataButton.classList.add("is-hidden");
     expandedDataButton.setAttribute("aria-expanded", "false");
+    exportLocaleButton.classList.add("is-hidden");
+    exportLocaleButton.disabled = false;
     const buttonText = expandedDataButton.querySelector("span");
     if (buttonText) {
       buttonText.textContent = "Selection details";
@@ -1645,6 +1649,7 @@
 
   function updateExpandedDashboard(properties, config, populationContext) {
     expandedDataButton.classList.remove("is-hidden");
+    exportLocaleButton.classList.remove("is-hidden");
     expandedDataButton.setAttribute("aria-expanded", String(dashboardExpanded));
     const buttonText = expandedDataButton.querySelector("span");
     if (buttonText) {
@@ -1659,6 +1664,240 @@
 
     expandedDataDashboard.classList.remove("is-hidden");
     renderExpandedDetails(properties, config, populationContext);
+  }
+
+  async function exportCurrentLocaleData() {
+    if (!currentSelection) {
+      return;
+    }
+
+    const selection = currentSelection;
+    exportLocaleButton.disabled = true;
+    setStatus("Preparing locale export...");
+
+    try {
+      const populationContext = await ensureSelectionPopulationContext(selection);
+      const rows = await buildLocaleExportRows(selection.feature.properties, selection.config, populationContext);
+      const csv = createCsv(rows);
+      const filename = `${slugifyFilename(getFeatureName(selection.feature.properties))}-${selection.config.key}-data.csv`;
+      downloadTextFile(filename, csv, "text/csv;charset=utf-8");
+      setStatus(`Exported ${getFeatureName(selection.feature.properties)} data.`);
+    } catch (error) {
+      setStatus("Could not export the selected locale data.");
+    } finally {
+      exportLocaleButton.disabled = false;
+    }
+  }
+
+  async function ensureSelectionPopulationContext(selection) {
+    const context = selection.populationContext;
+    if (context && context.populationSummary) {
+      return context;
+    }
+    const summary = await getPopulationSummaryForFeature(selection.feature, selection.config);
+    if (selection === currentSelection) {
+      currentSelection = {
+        ...currentSelection,
+        populationContext: summary,
+      };
+      renderDetails(selection.feature.properties, selection.config, summary);
+    }
+    return summary;
+  }
+
+  async function buildLocaleExportRows(properties, config, populationContext) {
+    const populationStore = await getPopulationData();
+    let healthStore = null;
+    try {
+      healthStore = await getHealthData();
+    } catch (error) {
+      healthStore = null;
+    }
+
+    const locale = {
+      name: getFeatureName(properties),
+      type: config.singular,
+      id: getLocaleExportId(properties, config),
+      matchKey: getDataLayerMatchKey(properties, config),
+    };
+    const rows = [];
+
+    appendLocaleExportRow(rows, locale, {
+      section: "Locale",
+      metric: "Name",
+      value: locale.name,
+    });
+    appendLocaleExportRow(rows, locale, {
+      section: "Locale",
+      metric: "Type",
+      value: locale.type,
+    });
+    appendLocaleExportRow(rows, locale, {
+      section: "Locale",
+      metric: "Match key",
+      value: locale.matchKey,
+    });
+    getSelectionDetailRows(properties, config, populationContext)
+      .filter(([label]) => !String(label).startsWith("Data layers"))
+      .forEach(([label, value]) => {
+        appendLocaleExportRow(rows, locale, {
+          section: "Selection details",
+          metric: label,
+          value,
+        });
+      });
+
+    const summary = populationContext && populationContext.populationSummary;
+    if (summary && Array.isArray(summary.estimateSeries)) {
+      summary.estimateSeries.forEach((point) => {
+        appendLocaleExportRow(rows, locale, {
+          section: "Population trend",
+          metric: "Population estimate",
+          value: formatNumberValue(point.value),
+          raw: point.value,
+          period: point.year,
+          source: summary.sourcePath,
+        });
+      });
+    }
+
+    if (!healthStore) {
+      appendLocaleExportRow(rows, locale, {
+        section: "Data layer",
+        metric: "Status",
+        value: "Could not load local health layer values.",
+      });
+      return rows;
+    }
+
+    getApplicableHealthLayers(config.mode).forEach((layer) => {
+      const record = getHealthLayerRecord(healthStore, layer, properties, config, populationStore);
+      if (!record || !record.metrics || !record.metrics.length) {
+        appendLocaleExportRow(rows, locale, {
+          section: "Data layer",
+          layerKey: layer.key,
+          layer: layer.label,
+          metric: "Status",
+          value: getMissingHealthLayerStatus(layer, healthStore.sources && healthStore.sources[layer.key], config),
+          source: layer.sourceUrl,
+        });
+        return;
+      }
+
+      record.metrics.forEach((metricItem) => {
+        appendLocaleExportRow(rows, locale, {
+          section: "Data layer",
+          layerKey: layer.key,
+          layer: record.title || layer.label,
+          metric: metricItem.label,
+          value: metricItem.value,
+          raw: metricItem.raw,
+          kind: metricItem.kind,
+          aggregate: metricItem.aggregate,
+          period: record.period,
+          source: record.source || layer.sourceUrl,
+          note: record.note,
+        });
+      });
+
+      Object.entries(record.history || {}).forEach(([metricLabel, points]) => {
+        points.forEach((point) => {
+          appendLocaleExportRow(rows, locale, {
+            section: "Data layer history",
+            layerKey: layer.key,
+            layer: record.title || layer.label,
+            metric: metricLabel,
+            value: point.value,
+            raw: point.raw,
+            kind: point.kind,
+            period: point.period,
+            source: record.source || layer.sourceUrl,
+            note: record.note,
+          });
+        });
+      });
+    });
+
+    return rows;
+  }
+
+  function appendLocaleExportRow(rows, locale, values) {
+    rows.push({
+      locale_name: locale.name,
+      locale_type: locale.type,
+      locale_id: locale.id,
+      match_key: locale.matchKey,
+      section: values.section || "",
+      layer_key: values.layerKey || "",
+      layer: values.layer || "",
+      metric: values.metric || "",
+      value: values.value === null || values.value === undefined ? "" : values.value,
+      raw: values.raw === null || values.raw === undefined ? "" : values.raw,
+      kind: values.kind || "",
+      aggregate: values.aggregate || "",
+      period: values.period === null || values.period === undefined ? "" : values.period,
+      source: values.source || "",
+      note: values.note || "",
+    });
+  }
+
+  function getLocaleExportId(properties, config) {
+    if (config.mode === "states") {
+      return getStateIdForProperties(properties);
+    }
+    if (config.mode === "counties") {
+      return getCountyIdForProperties(properties);
+    }
+    return properties.CBSA || properties.GEOID || "";
+  }
+
+  function createCsv(rows) {
+    const columns = [
+      "locale_name",
+      "locale_type",
+      "locale_id",
+      "match_key",
+      "section",
+      "layer_key",
+      "layer",
+      "metric",
+      "value",
+      "raw",
+      "kind",
+      "aggregate",
+      "period",
+      "source",
+      "note",
+    ];
+    return [
+      columns.join(","),
+      ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(",")),
+    ].join("\n");
+  }
+
+  function csvCell(value) {
+    const text = String(value === null || value === undefined ? "" : value);
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function downloadTextFile(filename, text, type) {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function slugifyFilename(value) {
+    const slug = String(value || "locale")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return slug || "locale";
   }
 
   function renderDetails(properties, config, populationContext) {
