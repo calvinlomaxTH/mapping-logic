@@ -1454,6 +1454,7 @@
     const token = ++selectionToken;
     dashboardExpanded = false;
     closeMetricHelp();
+    closeExportChooser();
 
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
@@ -1502,6 +1503,7 @@
     currentSelection = null;
     dashboardExpanded = false;
     closeMetricHelp();
+    closeExportChooser();
     if (highlightLayer) {
       map.removeLayer(highlightLayer);
       highlightLayer = null;
@@ -1678,10 +1680,8 @@
     try {
       const populationContext = await ensureSelectionPopulationContext(selection);
       const rows = await buildLocaleExportRows(selection.feature.properties, selection.config, populationContext);
-      const csv = createCsv(rows);
-      const filename = `${slugifyFilename(getFeatureName(selection.feature.properties))}-${selection.config.key}-data.csv`;
-      downloadTextFile(filename, csv, "text/csv;charset=utf-8");
-      setStatus(`Exported ${getFeatureName(selection.feature.properties)} data.`);
+      openExportChooser(selection, rows);
+      setStatus("Choose data to include in the export.");
     } catch (error) {
       setStatus("Could not export the selected locale data.");
     } finally {
@@ -1838,7 +1838,41 @@
       period: values.period === null || values.period === undefined ? "" : values.period,
       source: values.source || "",
       note: values.note || "",
+      _exportGroup: values.groupId || getDefaultExportGroupId(values),
+      _exportGroupLabel: values.groupLabel || getDefaultExportGroupLabel(values),
     });
+  }
+
+  function getDefaultExportGroupId(values) {
+    if (values.section === "Locale" || values.section === "Selection details") {
+      return "locale-details";
+    }
+    if (values.section === "Population trend") {
+      return "population-trend";
+    }
+    if (values.section === "Data layer history") {
+      return `history-${values.layerKey || "data-layer"}`;
+    }
+    if (values.layerKey) {
+      return `layer-${values.layerKey}`;
+    }
+    return slugifyFilename(values.section || "other");
+  }
+
+  function getDefaultExportGroupLabel(values) {
+    if (values.section === "Locale" || values.section === "Selection details") {
+      return "Locale and selection details";
+    }
+    if (values.section === "Population trend") {
+      return "Population trend";
+    }
+    if (values.section === "Data layer history") {
+      return `${values.layer || "Data layer"} history`;
+    }
+    if (values.layer) {
+      return values.layer;
+    }
+    return values.section || "Other data";
   }
 
   function getLocaleExportId(properties, config) {
@@ -1851,8 +1885,136 @@
     return properties.CBSA || properties.GEOID || "";
   }
 
-  function createCsv(rows) {
-    const columns = [
+  function openExportChooser(selection, rows) {
+    closeExportChooser();
+
+    const groups = getExportGroups(rows);
+    const overlay = document.createElement("div");
+    const dialog = document.createElement("section");
+    const header = document.createElement("div");
+    const title = document.createElement("h2");
+    const closeButton = document.createElement("button");
+    const summary = document.createElement("p");
+    const options = document.createElement("div");
+    const actions = document.createElement("div");
+    const selectAllButton = document.createElement("button");
+    const clearButton = document.createElement("button");
+    const cancelButton = document.createElement("button");
+    const exportButton = document.createElement("button");
+
+    overlay.className = "metric-help-overlay export-chooser-overlay";
+    overlay.dataset.exportChooserOverlay = "true";
+    dialog.className = "metric-help-dialog export-chooser-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "exportChooserTitle");
+    header.className = "metric-help-header";
+    title.id = "exportChooserTitle";
+    title.textContent = `Export ${getFeatureName(selection.feature.properties)}`;
+    closeButton.className = "metric-help-close";
+    closeButton.type = "button";
+    closeButton.title = "Close";
+    closeButton.setAttribute("aria-label", "Close export options");
+    closeButton.innerHTML = '<i data-lucide="x"></i>';
+    closeButton.addEventListener("click", closeExportChooser);
+    header.append(title, closeButton);
+
+    summary.className = "metric-help-summary";
+    summary.textContent = "Choose which groups to include. The download is an Excel-compatible workbook with formatted headers and grouped sections.";
+
+    options.className = "export-option-list";
+    groups.forEach((group) => {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      const copy = document.createElement("span");
+      const name = document.createElement("strong");
+      const count = document.createElement("span");
+      label.className = "export-option";
+      checkbox.type = "checkbox";
+      checkbox.value = group.id;
+      checkbox.checked = true;
+      name.textContent = group.label;
+      count.textContent = `${numberFormatter.format(group.count)} rows`;
+      copy.append(name, count);
+      label.append(checkbox, copy);
+      options.append(label);
+    });
+
+    actions.className = "export-chooser-actions";
+    selectAllButton.type = "button";
+    selectAllButton.textContent = "Select all";
+    clearButton.type = "button";
+    clearButton.textContent = "Clear";
+    cancelButton.type = "button";
+    cancelButton.textContent = "Cancel";
+    exportButton.type = "button";
+    exportButton.textContent = "Export Excel";
+    exportButton.className = "export-confirm-button";
+    selectAllButton.addEventListener("click", () => setExportChooserChecks(options, true));
+    clearButton.addEventListener("click", () => setExportChooserChecks(options, false));
+    cancelButton.addEventListener("click", closeExportChooser);
+    exportButton.addEventListener("click", () => exportCheckedLocaleRows(selection, rows, options));
+    actions.append(selectAllButton, clearButton, cancelButton, exportButton);
+
+    dialog.append(header, summary, options, actions);
+    overlay.append(dialog);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        closeExportChooser();
+      }
+    });
+    document.body.append(overlay);
+    refreshIcons();
+    exportButton.focus();
+  }
+
+  function getExportGroups(rows) {
+    const groupsById = new Map();
+    rows.forEach((row) => {
+      const id = row._exportGroup || "other";
+      if (!groupsById.has(id)) {
+        groupsById.set(id, {
+          id,
+          label: row._exportGroupLabel || "Other data",
+          count: 0,
+        });
+      }
+      groupsById.get(id).count += 1;
+    });
+    return Array.from(groupsById.values());
+  }
+
+  function setExportChooserChecks(container, checked) {
+    container.querySelectorAll("input[type='checkbox']").forEach((input) => {
+      input.checked = checked;
+    });
+  }
+
+  function exportCheckedLocaleRows(selection, rows, options) {
+    const checkedGroups = new Set(
+      Array.from(options.querySelectorAll("input[type='checkbox']:checked")).map((input) => input.value),
+    );
+    if (!checkedGroups.size) {
+      setStatus("Choose at least one export group.");
+      return;
+    }
+
+    const selectedRows = rows.filter((row) => checkedGroups.has(row._exportGroup));
+    const filename = `${slugifyFilename(getFeatureName(selection.feature.properties))}-${selection.config.key}-data.xls`;
+    const workbook = createExcelWorkbookHtml(selection, selectedRows);
+    downloadTextFile(filename, workbook, "application/vnd.ms-excel;charset=utf-8");
+    closeExportChooser();
+    setStatus(`Exported ${getFeatureName(selection.feature.properties)} Excel file.`);
+  }
+
+  function closeExportChooser() {
+    document.querySelectorAll("[data-export-chooser-overlay='true']").forEach((overlay) => {
+      overlay.remove();
+    });
+  }
+
+  function getExportColumns() {
+    return [
       "locale_name",
       "locale_type",
       "locale_id",
@@ -1869,15 +2031,59 @@
       "source",
       "note",
     ];
-    return [
-      columns.join(","),
-      ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(",")),
-    ].join("\n");
   }
 
-  function csvCell(value) {
-    const text = String(value === null || value === undefined ? "" : value);
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  function createExcelWorkbookHtml(selection, rows) {
+    const columns = getExportColumns();
+    const title = `${getFeatureName(selection.feature.properties)} Data Export`;
+    let previousGroup = "";
+    const bodyRows = [];
+    rows.forEach((row) => {
+      const groupLabel = row._exportGroupLabel || row.section || "Data";
+      if (groupLabel !== previousGroup) {
+        bodyRows.push(`<tr class="section-row"><td colspan="${columns.length}">${escapeHtml(groupLabel)}</td></tr>`);
+        previousGroup = groupLabel;
+      }
+      bodyRows.push(`<tr>${columns.map((column) => `<td>${escapeHtml(row[column])}</td>`).join("")}</tr>`);
+    });
+
+    return `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head>
+  <meta charset="utf-8" />
+  <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Locale Data</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+  <style>
+    body { font-family: Georgia, 'Times New Roman', serif; color: #213F56; }
+    h1 { margin: 0 0 6px; font-size: 20pt; color: #213F56; }
+    .meta { margin: 0 0 14px; color: #4D5B66; font-size: 10pt; }
+    table { border-collapse: collapse; width: 100%; }
+    th { background: #213F56; color: #FFFFFF; border: 1px solid #213F56; padding: 7px 8px; font-weight: bold; text-align: left; }
+    td { border: 1px solid #D7DEE4; padding: 6px 8px; vertical-align: top; }
+    tr:nth-child(even) td { background: #F7F9FB; }
+    .section-row td { background: #F7C560 !important; color: #000000; font-weight: bold; border-color: #CDA24A; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  <p class="meta">Generated ${escapeHtml(new Date().toLocaleString())} from ODIN Map Viewer. Locale ID: ${escapeHtml(getLocaleExportId(selection.feature.properties, selection.config))}</p>
+  <table>
+    <thead><tr>${columns.map((column) => `<th>${escapeHtml(formatExportColumnLabel(column))}</th>`).join("")}</tr></thead>
+    <tbody>${bodyRows.join("")}</tbody>
+  </table>
+</body>
+</html>`;
+  }
+
+  function formatExportColumnLabel(column) {
+    return column.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  function escapeHtml(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function downloadTextFile(filename, text, type) {
