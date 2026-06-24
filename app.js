@@ -281,6 +281,45 @@
 
   const FACILITY_SITE_LAYERS = [
     {
+      key: "third-horizon-office",
+      label: "Third Horizon Office",
+      sourceName: "Third Horizon Strategies",
+      sourceUrl: "https://320southcanal.com/",
+      coverage: "Office location",
+      color: "#213F56",
+      legend: "Third Horizon office",
+      titleFields: ["Name"],
+      popupFields: [
+        { label: "Type", fields: ["Type"] },
+        { label: "Address", fields: ["Address"] },
+        { label: "City", fields: ["City"] },
+        { label: "State", fields: ["State"] },
+        { label: "ZIP", fields: ["ZIP"] },
+        { label: "Building", fields: ["Building"] },
+        { label: "Coordinates", fields: ["Latitude", "Longitude"], format: "coordinates" },
+      ],
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [-87.64048, 41.87715],
+          },
+          properties: {
+            Name: "Third Horizon Strategies",
+            Type: "Office",
+            Address: "320 S Canal St",
+            City: "Chicago",
+            State: "IL",
+            ZIP: "60606",
+            Building: "BMO Tower",
+            Latitude: 41.87715,
+            Longitude: -87.64048,
+          },
+        },
+      ],
+    },
+    {
       key: "hifld-hospitals",
       label: "Hospitals",
       sourceName: "HIFLD",
@@ -974,6 +1013,21 @@
   }
 
   function createFacilitySiteLayer(config) {
+    if (Array.isArray(config.features)) {
+      const layer = L.geoJSON(
+        {
+          type: "FeatureCollection",
+          features: config.features,
+        },
+        {
+          pointToLayer: (feature, latlng) => L.circleMarker(latlng, getFacilityMarkerStyle(config)),
+        },
+      );
+      layer.on("click", (event) => selectFacilitySite(config, event));
+      setStatus(`${config.label} site layer ready.`);
+      return layer;
+    }
+
     const layer = L.esri.featureLayer({
       url: config.url,
       where: config.where || "1=1",
