@@ -284,7 +284,7 @@
       key: "third-horizon-office",
       label: "Third Horizon Office",
       sourceName: "Third Horizon Strategies",
-      sourceUrl: "https://320southcanal.com/",
+      sourceUrl: "https://thirdhorizon.com/",
       coverage: "Office location",
       color: "#213F56",
       legend: "Third Horizon office",
@@ -292,10 +292,12 @@
       popupFields: [
         { label: "Type", fields: ["Type"] },
         { label: "Address", fields: ["Address"] },
+        { label: "Suite", fields: ["Suite"] },
         { label: "City", fields: ["City"] },
         { label: "State", fields: ["State"] },
         { label: "ZIP", fields: ["ZIP"] },
         { label: "Building", fields: ["Building"] },
+        { label: "Website", fields: ["Website"], link: true },
         { label: "Coordinates", fields: ["Latitude", "Longitude"], format: "coordinates" },
       ],
       features: [
@@ -309,10 +311,12 @@
             Name: "Third Horizon Strategies",
             Type: "Office",
             Address: "320 S Canal St",
+            Suite: "3030",
             City: "Chicago",
             State: "IL",
             ZIP: "60606",
             Building: "BMO Tower",
+            Website: "https://thirdhorizon.com/",
             Latitude: 41.87715,
             Longitude: -87.64048,
           },
@@ -1851,6 +1855,7 @@
           period: record.period,
           source: record.source || layer.sourceUrl,
           note: record.note,
+          benchmark: getUsBenchmark(healthStore, layer.key, metricItem.label, record.period),
         });
       });
 
@@ -1867,6 +1872,7 @@
             period: point.period,
             source: record.source || layer.sourceUrl,
             note: record.note,
+            benchmark: getUsBenchmark(healthStore, layer.key, metricLabel, point.period),
           });
         });
       });
@@ -1892,6 +1898,10 @@
       period: values.period === null || values.period === undefined ? "" : values.period,
       source: values.source || "",
       note: values.note || "",
+      us_benchmark: values.benchmark && values.benchmark.value ? values.benchmark.value : "",
+      us_benchmark_raw: values.benchmark && values.benchmark.raw !== undefined && values.benchmark.raw !== null ? values.benchmark.raw : "",
+      us_benchmark_period: values.benchmark && values.benchmark.period ? values.benchmark.period : "",
+      us_benchmark_note: values.benchmark && values.benchmark.note ? values.benchmark.note : "",
       _exportGroup: values.groupId || getDefaultExportGroupId(values),
       _exportGroupLabel: values.groupLabel || getDefaultExportGroupLabel(values),
     });
@@ -2084,6 +2094,10 @@
       "period",
       "source",
       "note",
+      "us_benchmark",
+      "us_benchmark_raw",
+      "us_benchmark_period",
+      "us_benchmark_note",
     ];
   }
 
@@ -2576,6 +2590,7 @@
 
   function buildMetricComparisonData(store, layer, config, record, populationStore, properties) {
     if (record && record.metricComparisons) {
+      attachBenchmarkComparisons(record.metricComparisons, store, layer.key, record);
       return {
         scopeLabel: record.comparisonLabel || "matched component records",
         metrics: record.metricComparisons,
@@ -2587,17 +2602,54 @@
       .map(([geoid, item]) => [geoid, item && item[layer.key]])
       .filter(([, item]) => Boolean(item));
 
+    const metrics = buildIqrByMetric(
+      recordEntries,
+      scope.key,
+      populationStore,
+      record,
+      getSelectedComparisonGeoid(properties, config),
+      getSelectedPopulationEstimate(),
+    );
+    attachBenchmarkComparisons(metrics, store, layer.key, record);
     return {
       scopeLabel: scope.label,
-      metrics: buildIqrByMetric(
-        recordEntries,
-        scope.key,
-        populationStore,
-        record,
-        getSelectedComparisonGeoid(properties, config),
-        getSelectedPopulationEstimate(),
-      ),
+      metrics,
     };
+  }
+
+  function attachBenchmarkComparisons(comparisons, store, layerKey, record) {
+    if (!comparisons || !record) {
+      return;
+    }
+    Object.keys(comparisons).forEach((label) => {
+      const benchmark = getUsBenchmark(store, layerKey, label, record.period);
+      if (benchmark) {
+        comparisons[label].benchmark = benchmark;
+      }
+    });
+  }
+
+  function getUsBenchmark(store, layerKey, metricLabel, period) {
+    if (!store || !store.benchmarks || !layerKey || !metricLabel) {
+      return null;
+    }
+    const metricBenchmarks = store.benchmarks[layerKey] && store.benchmarks[layerKey][metricLabel];
+    if (!metricBenchmarks) {
+      return null;
+    }
+    const periodKey = String(period || "");
+    if (periodKey && metricBenchmarks[periodKey]) {
+      return metricBenchmarks[periodKey];
+    }
+    if (periodKey.includes(",")) {
+      const firstMatch = periodKey.split(",").map((item) => item.trim()).find((item) => metricBenchmarks[item]);
+      if (firstMatch) {
+        return metricBenchmarks[firstMatch];
+      }
+    }
+    const periods = Object.keys(metricBenchmarks).sort();
+    const latestPeriod = periods[periods.length - 1];
+    return latestPeriod ? metricBenchmarks[latestPeriod] : null;
   }
 
   function getSelectedPopulationEstimate() {
@@ -3125,6 +3177,9 @@
     description.textContent = getMetricExplanation(metricItem.label, metricItem.kind);
     facts.className = "metric-help-facts";
     appendHelpFact(facts, "Shown value", metricItem.value || "--");
+    if (comparison && comparison.benchmark) {
+      appendHelpFact(facts, "US benchmark", `${comparison.benchmark.value} (${comparison.benchmark.period})`);
+    }
     appendHelpFact(facts, "Interquartile range", formatIqr(comparison));
     if (comparison && comparison.raw && Number.isFinite(comparison.raw.percentile)) {
       appendHelpFact(facts, "Raw percentile", formatPercentile(comparison.raw.percentile));

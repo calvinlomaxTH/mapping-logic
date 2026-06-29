@@ -24,8 +24,7 @@ HIFLD_MEDICAL_FACILITIES_FEATURESERVER = (
     "US_HIFLD_Assets/FeatureServer/2"
 )
 
-BASE_COLUMNS = [
-    "source",
+COMPACT_COLUMNS = [
     "layer",
     "facility_category",
     "name",
@@ -48,9 +47,15 @@ BASE_COLUMNS = [
     "website",
     "latitude",
     "longitude",
-    "source_url",
     "original_object_id",
 ]
+
+RAW_REFERENCE_COLUMNS = [
+    "source",
+    "source_url",
+]
+
+BASE_COLUMNS = RAW_REFERENCE_COLUMNS[:1] + COMPACT_COLUMNS[:-1] + RAW_REFERENCE_COLUMNS[1:] + COMPACT_COLUMNS[-1:]
 
 MEDICAL_ASSET_TYPES = ["Urgent Care", "VA Health Facility", "EMS"]
 
@@ -220,9 +225,12 @@ def export_rows(include_medical_hospitals=False, page_size=2000, limit=None):
     return rows
 
 
-def write_csv(rows, out_path):
-    extra_columns = sorted({key for row in rows for key in row if key not in BASE_COLUMNS})
-    fieldnames = BASE_COLUMNS + extra_columns
+def write_csv(rows, out_path, include_raw_attributes=False):
+    if include_raw_attributes:
+        extra_columns = sorted({key for row in rows for key in row if key not in BASE_COLUMNS})
+        fieldnames = BASE_COLUMNS + extra_columns
+    else:
+        fieldnames = COMPACT_COLUMNS
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
@@ -240,6 +248,11 @@ def parse_args(argv):
         action="store_true",
         help="Also include Hospital records from the broad US_HIFLD_Assets layer. This may duplicate richer Hospitals_hifld rows.",
     )
+    parser.add_argument(
+        "--include-raw-attributes",
+        action="store_true",
+        help="Include all raw source attributes and reference URL columns. The default compact CSV is much smaller for GitHub.",
+    )
     return parser.parse_args(argv)
 
 
@@ -250,7 +263,7 @@ def main(argv=None):
         page_size=args.page_size,
         limit=args.limit,
     )
-    write_csv(rows, args.out)
+    write_csv(rows, args.out, include_raw_attributes=args.include_raw_attributes)
     print(f"Wrote {len(rows):,} HIFLD rows to {args.out}")
 
 

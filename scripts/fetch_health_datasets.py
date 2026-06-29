@@ -139,6 +139,34 @@ def clean_metrics(metrics):
     return clean
 
 
+def is_rate_metric(item):
+    label = str(item.get("label") or "").lower()
+    kind = item.get("kind")
+    return (
+        kind == "percent"
+        or "rate" in label
+        or "share" in label
+        or "coverage" in label
+    ) and "provider reports" not in label
+
+
+def add_benchmarks(target, layer, period, metrics, source="", note="United States benchmark"):
+    metrics = [item for item in clean_metrics(metrics) if is_rate_metric(item)]
+    if not period or not metrics:
+        return
+    layer_bucket = target.setdefault("benchmarks", {}).setdefault(layer, {})
+    for item in metrics:
+        layer_bucket.setdefault(item["label"], {})[str(period)] = {
+            "label": item["label"],
+            "period": str(period),
+            "value": item["value"],
+            "raw": item["raw"],
+            "kind": item["kind"],
+            "source": source or SOURCES.get(layer, ""),
+            "note": note,
+        }
+
+
 def add(target, scope, geoid, layer, title, metrics, period="", source=""):
     metrics = clean_metrics(metrics)
     if not geoid or not metrics:
@@ -171,6 +199,146 @@ def add_series(target, scope, geoid, layer, title, period_metrics, source=""):
     add(target, scope, geoid, layer, title, period_metrics[latest_period], str(latest_period), source)
     for period in sorted(period_metrics.keys())[-5:]:
         attach_history(target, scope, geoid, layer, period, period_metrics[period])
+
+
+def metric_raw(metrics, label):
+    for item in metrics or []:
+        if item.get("label") == label:
+            return item.get("raw")
+    return None
+
+
+def record_period_metrics(record):
+    period_metrics = {}
+    if record and record.get("period") and record.get("metrics"):
+        period_metrics[str(record["period"])] = record["metrics"]
+    for label, points in (record or {}).get("history", {}).items():
+        for point in points:
+            period = str(point.get("period") or "")
+            if not period:
+                continue
+            period_metrics.setdefault(period, []).append({
+                "label": label,
+                "raw": point.get("raw"),
+                "value": point.get("value"),
+                "kind": point.get("kind"),
+                "aggregate": "average",
+            })
+    return period_metrics
+
+
+def backfill_derived_benchmarks(data):
+    backfill_sahie_benchmarks(data)
+    backfill_medicare_benchmarks(data)
+    backfill_seer_benchmarks(data)
+    backfill_fluvaxview_benchmarks(data)
+
+
+def backfill_sahie_benchmarks(data):
+    totals = defaultdict(lambda: {"uninsured": 0, "insured": 0})
+    for state_layers in data.get("states", {}).values():
+        record = state_layers.get("sahie")
+        for period, metrics in record_period_metrics(record).items():
+            uninsured = metric_raw(metrics, "Uninsured")
+            insured = metric_raw(metrics, "Insured")
+            if uninsured is not None:
+                totals[period]["uninsured"] += uninsured
+            if insured is not None:
+                totals[period]["insured"] += insured
+    for period, values in totals.items():
+        total = values["uninsured"] + values["insured"]
+        if total <= 0:
+            continue
+        add_benchmarks(data, "sahie", period, [
+            metric("Uninsured rate", values["uninsured"] / total * 100, "percent", "average"),
+            metric("Insured rate", values["insured"] / total * 100, "percent", "average"),
+        ], SOURCES["sahie"], "United States benchmark derived from summed state SAHIE counts")
+
+
+def backfill_medicare_benchmarks(data):
+    totals = defaultdict(lambda: {"beneficiaries": 0, "ma": 0})
+    for state_layers in data.get("states", {}).values():
+        record = state_layers.get("cms-medicare-enrollment")
+        for period, metrics in record_period_metrics(record).items():
+            beneficiaries = metric_raw(metrics, "Beneficiaries")
+            ma = metric_raw(metrics, "Medicare Advantage")
+            if beneficiaries is not None:
+                totals[period]["beneficiaries"] += beneficiaries
+            if ma is not None:
+                totals[period]["ma"] += ma
+    for period, values in totals.items():
+        if values["beneficiaries"] <= 0:
+            continue
+        add_benchmarks(data, "cms-medicare-enrollment", period, [
+            metric("MA share", values["ma"] / values["beneficiaries"] * 100, "percent", "average"),
+        ], SOURCES["cms-medicare-enrollment"], "United States benchmark derived from summed state Medicare enrollment counts")
+
+
+def backfill_seer_benchmarks(data):
+    totals = defaultdict(lambda: {"cases": 0, "population_base": 0, "trends": []})
+    for state, state_layers in data.get("states", {}).items():
+        if state not in STATE_ABBR:
+            continue
+        record = state_layers.get("nih-seer-cancer-statistics")
+        for period, metrics in record_period_metrics(record).items():
+            rate = metric_raw(metrics, "All-cancer incidence rate")
+            cases = metric_raw(metrics, "Average annual cases")
+            trend = metric_raw(metrics, "Recent 5-year trend")
+            if rate and cases:
+                totals[period]["cases"] += cases
+                totals[period]["population_base"] += cases / rate * 100000
+            if trend is not None:
+                totals[period]["trends"].append(trend)
+    for period, values in totals.items():
+        metrics = []
+        if values["population_base"] > 0:
+            metrics.append(metric("All-cancer incidence rate", values["cases"] / values["population_base"] * 100000, "decimal", "average"))
+        if values["trends"]:
+            metrics.append(metric("Recent 5-year trend", average(values["trends"]), "percent", "average"))
+        add_benchmarks(data, "nih-seer-cancer-statistics", period, metrics, SOURCES["nih-seer-cancer-statistics"], "United States benchmark derived from state cancer rates and average annual cases")
+
+
+def latest_state_populations():
+    with POPULATION_CSV.open(newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        headers = reader.fieldnames or []
+        years = sorted(
+            int(match.group(1))
+            for header in headers
+            for match in [re.match(r"POPESTIMATE(\d{4})$", header.strip())]
+            if match
+        )
+        if not years:
+            return {}
+        field = f"POPESTIMATE{years[-1]}"
+        populations = {}
+        for row in reader:
+            if str(row_value(row, "SUMLEV")).strip().zfill(3) == "040":
+                state = str(row_value(row, "STATE")).strip().zfill(2)
+                populations[state] = number(row_value(row, field))
+        return populations
+
+
+def backfill_fluvaxview_benchmarks(data):
+    populations = latest_state_populations()
+    totals = defaultdict(lambda: {"weighted": 0, "population": 0})
+    for state, state_layers in data.get("states", {}).items():
+        population = populations.get(state)
+        if not population:
+            continue
+        record = state_layers.get("cdc-fluvaxview")
+        for period, metrics in record_period_metrics(record).items():
+            coverage = metric_raw(metrics, "Flu vaccine coverage")
+            if coverage is None:
+                continue
+            totals[period]["weighted"] += coverage * population
+            totals[period]["population"] += population
+    for period, values in totals.items():
+        if values["population"] <= 0:
+            continue
+        add_benchmarks(data, "cdc-fluvaxview", period, [
+            metric("Flu vaccine coverage", values["weighted"] / values["population"], "percent", "average"),
+        ], SOURCES["cdc-fluvaxview"], "United States benchmark derived from state FluVaxView estimates weighted by latest Census state population")
 
 
 def build_geo_indexes():
@@ -236,11 +404,16 @@ def ingest_brfss(data):
     }
     rows = fetch_json(SOURCES["brfss"], params)
     grouped = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    us_grouped = defaultdict(lambda: defaultdict(list))
     for row in rows:
-        state = ABBR_STATE.get(str(row.get("locationabbr", "")).upper())
+        location_abbr = str(row.get("locationabbr", "")).upper()
+        location_desc = str(row.get("locationdesc", "")).strip().upper()
+        state = ABBR_STATE.get(location_abbr)
         year = str(row.get("year", "")).strip()
         label = wanted.get(row.get("questionid"))
         value = number(row.get("data_value"))
+        if (location_abbr == "US" or location_desc == "UNITED STATES") and year and label and value is not None:
+            us_grouped[year][label].append(value)
         if state and year and label and value is not None:
             grouped[state][year][label].append(value)
     for state, years_by_label in grouped.items():
@@ -252,6 +425,11 @@ def ingest_brfss(data):
             for year, labels in years_by_label.items()
         }
         add_series(data, "states", state, "brfss", "BRFSS", period_metrics)
+    for year, labels in us_grouped.items():
+        add_benchmarks(data, "brfss", year, [
+            metric(label, average(values), "percent", "average")
+            for label, values in labels.items()
+        ], SOURCES["brfss"])
 
 
 def ingest_care_compare(data, county_index):
@@ -322,6 +500,7 @@ def ingest_hrsa(data, county_index):
 
 def ingest_sahie(data):
     grouped = defaultdict(dict)
+    us_grouped = {}
     for year in range(2019, 2024):
         url = SOURCES["sahie"].replace("sahie-2023-csv.zip", f"sahie-{year}-csv.zip")
         try:
@@ -337,6 +516,14 @@ def ingest_sahie(data):
                 continue
             state = str(row.get("statefips", "")).zfill(2)
             county = str(row.get("countyfips", "")).zfill(3)
+            if row.get("geocat") in ("010", "10") or (state == "00" and county == "000"):
+                us_grouped[year] = [
+                    metric("Uninsured", number(row.get("NUI"))),
+                    metric("Insured", number(row.get("NIC"))),
+                    metric("Uninsured rate", number(row.get("PCTUI")), "percent", "average"),
+                    metric("Insured rate", number(row.get("PCTIC")), "percent", "average"),
+                ]
+                continue
             scope = "states" if row.get("geocat") == "40" else "counties"
             geoid = state if scope == "states" else f"{state}{county}"
             grouped[(scope, geoid)][year] = [
@@ -347,10 +534,13 @@ def ingest_sahie(data):
             ]
     for (scope, geoid), period_metrics in grouped.items():
         add_series(data, scope, geoid, "sahie", "SAHIE", period_metrics, SOURCES["sahie"])
+    for year, metrics in us_grouped.items():
+        add_benchmarks(data, "sahie", year, metrics, SOURCES["sahie"])
 
 
 def ingest_medicare(data):
     grouped = defaultdict(dict)
+    us_grouped = {}
     for year in range(2021, 2026):
         rows = fetch_json(SOURCES["cms-medicare-enrollment"], {
             "size": "10000",
@@ -360,14 +550,21 @@ def ingest_medicare(data):
         for row in rows:
             level = row.get("BENE_GEO_LVL")
             fips = digits(row.get("BENE_FIPS_CD", ""))
+            total = number(row.get("TOT_BENES"))
+            ma = number(row.get("MA_AND_OTH_BENES"))
+            if str(level).lower() in ("national", "total", "country") or fips in ("0", "00", "00000"):
+                us_grouped[year] = [
+                    metric("Beneficiaries", total),
+                    metric("Medicare Advantage", ma),
+                    metric("MA share", (ma / total * 100) if total and ma is not None else None, "percent", "average"),
+                ]
+                continue
             if level == "State" and 1 <= len(fips) <= 2:
                 scope, geoid = "states", fips.zfill(2)
             elif level == "County" and len(fips) >= 4:
                 scope, geoid = "counties", fips.zfill(5)[-5:]
             else:
                 continue
-            total = number(row.get("TOT_BENES"))
-            ma = number(row.get("MA_AND_OTH_BENES"))
             grouped[(scope, geoid)][year] = [
                 metric("Beneficiaries", total),
                 metric("Medicare Advantage", ma),
@@ -375,6 +572,8 @@ def ingest_medicare(data):
             ]
     for (scope, geoid), period_metrics in grouped.items():
         add_series(data, scope, geoid, "cms-medicare-enrollment", "CMS Medicare Enrollment", period_metrics)
+    for year, metrics in us_grouped.items():
+        add_benchmarks(data, "cms-medicare-enrollment", year, metrics, SOURCES["cms-medicare-enrollment"])
 
 
 def ingest_medicaid(data, state_names):
@@ -437,6 +636,7 @@ def ingest_svi(data):
             break
         offset += page_size
     state_values = defaultdict(lambda: defaultdict(list))
+    us_values = defaultdict(list)
     for item in rows:
         attrs = item.get("attributes", {})
         county = attrs.get("STCNTY")
@@ -453,11 +653,16 @@ def ingest_svi(data):
         add(data, "counties", county, "cdc-atsdr-svi", "CDC/ATSDR SVI", metrics, "2022")
         for metric_item in metrics:
             state_values[state][metric_item["label"]].append((metric_item["raw"], population))
+            us_values[metric_item["label"]].append((metric_item["raw"], population))
     for state, values in state_values.items():
         add(data, "states", state, "cdc-atsdr-svi", "CDC/ATSDR SVI", [
             metric(label, weighted_average(raw_values), "percent" if "%" in label or label in ("Uninsured", "Unemployment") else "decimal", "average")
             for label, raw_values in values.items()
         ], "2022")
+    add_benchmarks(data, "cdc-atsdr-svi", "2022", [
+        metric(label, weighted_average(raw_values), "percent" if "%" in label or label in ("Uninsured", "Unemployment") else "decimal", "average")
+        for label, raw_values in us_values.items()
+    ], SOURCES["cdc-atsdr-svi"])
 
 
 def ingest_hospital_cost_reports(data, county_index):
@@ -566,6 +771,13 @@ def ingest_seer_cancer(data):
                 if len(row) < 11:
                     continue
                 fips = fips_from_value(row[1], 5)
+                if fips == "00000" or str(row[0]).strip().upper() == "UNITED STATES":
+                    add_benchmarks(data, "nih-seer-cancer-statistics", "2018-2022", [
+                        metric("All-cancer incidence rate", number(row[2]), "decimal", "average"),
+                        metric("Average annual cases", number(row[8])),
+                        metric("Recent 5-year trend", number(row[10]), "percent", "average"),
+                    ], url)
+                    continue
                 geoid = fips[:2]
                 if geoid not in STATE_ABBR:
                     continue
@@ -587,15 +799,21 @@ def ingest_fluvaxview(data):
     rows = fetch_json(SOURCES["cdc-fluvaxview"], {
         "$limit": "50000",
         "$select": "geography_name,curr_season,curr_estimate,current_season_week_ending",
-        "$where": "geographic_level='State' AND comparison_type='Overall'",
+        "$where": "geographic_level in('State','National') AND comparison_type='Overall'",
         "$order": "current_season_week_ending DESC",
     }, timeout=120)
     latest_by_state_season = {}
+    latest_by_us_season = {}
     for row in rows:
         state_name = str(row.get("geography_name", "")).strip().upper()
         state = STATE_NAMES.get(state_name)
         season = str(row.get("curr_season") or "").strip()
         week = str(row.get("current_season_week_ending") or "").strip()
+        if state_name == "UNITED STATES" and season:
+            key = season
+            if key not in latest_by_us_season or week > latest_by_us_season[key]["week"]:
+                latest_by_us_season[key] = {"week": week, "value": number(row.get("curr_estimate"))}
+            continue
         if state and season:
             key = (state, season)
             if key not in latest_by_state_season or week > latest_by_state_season[key]["week"]:
@@ -607,6 +825,10 @@ def ingest_fluvaxview(data):
         ]
     for state, period_metrics in by_state.items():
         add_series(data, "states", state, "cdc-fluvaxview", "CDC FluVaxView", period_metrics)
+    for season, item in latest_by_us_season.items():
+        add_benchmarks(data, "cdc-fluvaxview", season, [
+            metric("Flu vaccine coverage", item["value"], "percent", "average"),
+        ], SOURCES["cdc-fluvaxview"])
 
 
 STATE_NAMES = {}
@@ -619,6 +841,7 @@ def main():
     data = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "sources": {key: {"url": value, "status": "pending"} for key, value in SOURCES.items()},
+        "benchmarks": {},
         "states": {},
         "counties": {},
         "cbsas": {},
@@ -644,6 +867,7 @@ def main():
         except Exception as error:
             data["sources"][key]["status"] = "error"
             data["sources"][key]["error"] = str(error)
+    backfill_derived_benchmarks(data)
     OUT.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     print(f"Wrote {OUT.relative_to(ROOT)}")
     print(json.dumps({key: value["status"] for key, value in data["sources"].items()}, indent=2))
